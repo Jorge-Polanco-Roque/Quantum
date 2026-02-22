@@ -44,7 +44,7 @@ quantum/
 │   │                               #   All agents share this factory (deterministic by default)
 │   ├── fundamental_analyst.py      # Single-call LLM: combines quant metrics + news → fundamental analysis
 │   ├── tools.py                    # 6 @tool functions incl. run_ensemble_optimization (Spanish docstrings)
-│   │                               #   SECTOR_TICKERS: ~106 categories, ~380 unique tickers
+│   │                               #   SECTOR_TICKERS: ~308 categories, ~1004 unique tickers
 │   │                               #   TICKER_ALIASES: short fund names → Yahoo Finance .MX tickers
 │   │                               #   Covers: sectors, countries, cryptos, indices, futures, ETFs, UCITS, SIC
 │   │                               #   ALL_TOOLS (6): full set for chatbot v2 / other consumers
@@ -191,21 +191,23 @@ Conversational agent using `create_react_agent` + `InMemorySaver` for multi-turn
 Dashboard integration: always-visible sidebar (`chat_widget.py`, 300px fixed, dynamically repositionable) with 3 callbacks — init (generate thread_id), send (build context from stores → ChatbotAgent.chat() → render markdown bubbles), position toggle (switch_chat_position). Layout uses CSS flexbox: `.app-layout` (100vw × 100vh flex row) → `.dashboard-main` (flex: 1 1 0%, fills remaining space, min-width: 0) + `.chat-sidebar` (flex: 0 0 300px, rigid). Dash internal wrappers (`#react-entry-point`, `#_dash-app-content`) are explicitly sized to 100% to prevent layout interference. Position toggle buttons (◀▲▼▶) in chat header switch between right/left/top/bottom by changing inline styles on 3 container IDs (`app-layout`, `dashboard-main`, `chat-sidebar`) — no DOM rebuild, all state preserved. `_compute_position_styles(pos)` returns the 3 style dicts per position. Left/Right: only order + border changes (no flex overrides). Top/Bottom: flex-direction column + sidebar width: 100% + height: 25vh. Responsive: stacks vertically below 1200px.
 
 ### SECTOR_TICKERS Asset Coverage (agents/tools.py)
-~106 curated mappings, ~380 unique tickers:
-- **Sectors** (20): technology, energy, healthcare, finance, consumer, industrial, real_estate, utilities, telecom, semiconductor, ai, ev, cloud, renewable, crypto (stocks), fintech, defense, biotech, retail, gaming
-- **Countries/Regions** (14): mexico, mexicanas, mexico_esr, mexico_ampliado, bmv/bolsa_mexicana (45 tickers), brazil/brasil, latam/latinoamerica, chile, colombia, argentina
-- **Themes** (6): esg, socialmente_responsable, sustainable/sustentable, magnificent7/mag7
-- **Criptomonedas** (3): cripto/criptomonedas/crypto_directo — 14 pares USD (BTC-USD, ETH-USD, SOL-USD, etc.)
-- **Indices** (7): indices, indices_usa, indices_global, ipc (^MXX), sp500 (^GSPC), nasdaq, dow_jones
-- **Futuros** (6): futuros/futures, commodities/materias_primas, oro/gold, petroleo/oil
-- **ETFs mercado** (3): etf/etfs/etf_mercado (SPY, QQQ, IWM, etc.)
-- **ETFs sector** (7): etf_tech, etf_salud, etf_financiero, etf_energia, etf_industrial, etf_consumo, etf_inmobiliario
-- **ETFs tematicos** (6): etf_ark/etf_innovacion, etf_dividendos, etf_dividendos_global, etf_bonos/etf_renta_fija
-- **ETFs commodities** (3): etf_oro, etf_plata, etf_commodities
-- **ETFs pais/region** (7): etf_mexico/naftrac, etf_brasil, etf_china, etf_emergentes, etf_europa, etf_japon, etf_global
-- **UCITS** (7): ucits/ucits_equity (VWRL.L, CSPX.L, IWDA.L, etc.), ucits_bonos/ucits_renta_fija (AGBP.L, IGLT.L, etc.), ucits_dividendos, ucits_oro, ucits_commodities
-- **SIC Mexico** (2): sic/sic_mexico — ~31 ETFs extranjeros disponibles en el Sistema Internacional de Cotizaciones
-- **Fondos Mexico** (5): fondos_mexico/fondos_inversion, fondos_blackrock/blackrock_mexico, fondos_gbm — BlackRock (BLKEM1, GOLD5+, BLKGUB1, BLKINT, BLKDOL, BLKLIQ, BLKRFA) + GBM (GBMCRE, GBMMOD, GBMF2, GBMINT)
+~308 curated mappings, ~1004 unique tickers:
+- **Sectors** (expanded to 15-20 tickers each): technology, energy, healthcare, finance, consumer, industrial, real_estate, utilities, telecom, semiconductor, ai, ev, cloud, renewable, crypto (stocks), fintech, defense, biotech, retail, gaming, software, materials, pharma, medtech, insurance, media, cybersecurity, food_beverage, consumer_staples, transportation, agriculture, water, cannabis, luxury, communication_services, aerospace, hospitality, payments, logistics, reits, data_center, healthcare_services, diagnostics, waste_management, construction, chemicals, steel, mining, airlines, automotive, education, pet_economy, sports_betting, hydrogen, nuclear, space, internet, ecommerce, 3d_printing, quantum_computing
+- **Countries/Regions** (30+): mexico, mexicanas, mexico_esr, mexico_ampliado, bmv/bolsa_mexicana (45 tickers), brazil/brasil, latam/latinoamerica, chile, colombia, argentina, india, uk/reino_unido, europe/europa_acciones, germany/alemania, canada, australia, japan/japon_acciones, china/china_adr, korea/corea, southeast_asia, spain/espana, africa_stocks, taiwan, israel
+- **Themes**: esg, socialmente_responsable, sustainable/sustentable, magnificent7/mag7
+- **Criptomonedas**: cripto/criptomonedas/crypto_directo — 27 pares USD (BTC, ETH, SOL, BNB, XRP, ADA, DOGE, AVAX, DOT, MATIC, LINK, ATOM, LTC, NEAR, UNI, AAVE, FTM, ALGO, MANA, SAND, etc.)
+- **Indices** (19+): indices, indices_usa, indices_global, ipc, sp500, nasdaq, dow_jones, dax, cac40, ibex, nifty, kospi, tsx, merval + more
+- **Futuros** (15+): futuros/futures, commodities/materias_primas, oro/gold, petroleo/oil, cobre/copper, platino, cafe/coffee, algodon/cotton, azucar/sugar
+- **ETFs mercado**: etf/etfs/etf_mercado (SPY, QQQ, IWM, etc.)
+- **ETFs sector**: etf_tech, etf_salud, etf_financiero, etf_energia, etf_industrial, etf_consumo, etf_inmobiliario, etf_materials, etf_utilities, etf_communication, etf_real_estate, etf_healthcare, etf_defense
+- **ETFs size/style**: etf_small_cap, etf_mid_cap, etf_value, etf_growth, etf_momentum, etf_low_vol
+- **ETFs tematicos**: etf_ark, etf_esg, etf_semiconductor, etf_cybersecurity, etf_clean_energy, etf_water, etf_infrastructure, etf_ai, etf_robotics, etf_cloud, etf_fintech, etf_bitcoin, etf_ethereum, etf_cannabis, etf_space, etf_gaming, etf_luxury, etf_agriculture, etf_dividendos, etf_dividendos_global
+- **ETFs renta fija**: etf_bonos, etf_treasury, etf_high_yield, etf_tips, etf_corporate, etf_muni, etf_emerging_debt
+- **ETFs commodities**: etf_oro, etf_plata, etf_commodities
+- **ETFs pais/region**: etf_mexico, etf_brasil, etf_china, etf_emergentes, etf_europa, etf_japon, etf_global, etf_india, etf_korea, etf_canada, etf_australia, etf_uk, etf_germany, etf_southeast_asia, etf_africa, etf_middle_east, etf_frontier, etf_latam
+- **UCITS** (15+ categories): ucits/ucits_equity (15 tickers), ucits_bonos (8), ucits_esg, ucits_small_cap, ucits_emerging, ucits_usa, ucits_europe, ucits_japan, ucits_pacific, ucits_dividendos, ucits_oro, ucits_commodities
+- **SIC Mexico**: sic/sic_mexico — ~31 ETFs extranjeros disponibles en el Sistema Internacional de Cotizaciones
+- **Fondos Mexico**: fondos_mexico/fondos_inversion, fondos_blackrock/blackrock_mexico, fondos_gbm
 
 ### TICKER_ALIASES (agents/tools.py)
 Maps common short fund names to Yahoo Finance series tickers. `validate_tickers` resolves aliases automatically:
