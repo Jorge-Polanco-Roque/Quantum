@@ -38,6 +38,8 @@ quantum/
 │   ├── market_analyst.py           # Optimistic debater + fetch_market_context (Spanish)
 │   ├── portfolio_advisor.py        # Judge: synthesizes debate + ensemble + sentiment (Spanish)
 │   ├── graph.py                    # PortfolioAgentsGraph (passes sentiment_data + ensemble_data)
+│   │                               #   _create_llm(provider, model, key, temperature=0.0)
+│   │                               #   All agents share this factory (deterministic by default)
 │   ├── fundamental_analyst.py      # Single-call LLM: combines quant metrics + news → fundamental analysis
 │   ├── tools.py                    # 6 @tool functions incl. run_ensemble_optimization (Spanish docstrings)
 │   │                               #   SECTOR_TICKERS: ~106 categories, ~380 unique tickers

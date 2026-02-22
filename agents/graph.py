@@ -13,17 +13,26 @@ from agents.portfolio_advisor import create_portfolio_advisor
 import config as cfg
 
 
-def _create_llm(provider: str, model: str, api_key: str):
-    """Instancia un modelo de chat LangChain para el proveedor dado."""
+def _create_llm(provider: str, model: str, api_key: str, temperature: float = 0.0):
+    """Instancia un modelo de chat LangChain para el proveedor dado.
+
+    ``temperature=0.0`` por defecto para obtener resultados reproducibles
+    (greedy decoding).  Los llamadores pueden sobreescribirlo si necesitan
+    mas creatividad.
+    """
     provider = provider.lower()
     if provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
 
-        return ChatAnthropic(model=model, anthropic_api_key=api_key)
+        return ChatAnthropic(
+            model=model, anthropic_api_key=api_key, temperature=temperature,
+        )
     else:
         from langchain_openai import ChatOpenAI
 
-        return ChatOpenAI(model=model, openai_api_key=api_key)
+        return ChatOpenAI(
+            model=model, openai_api_key=api_key, temperature=temperature,
+        )
 
 
 class PortfolioAgentsGraph:
