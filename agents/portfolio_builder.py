@@ -95,12 +95,13 @@ REGLAS GENERALES:
 - Si un sector no esta en la herramienta de busqueda, usa validate_tickers para probar
   simbolos conocidos para ese tema (ej: para crypto: COIN, MSTR, MARA, RIOT).
 
-⚠️ ANTI-LOOP — MAXIMO DE LLAMADAS A HERRAMIENTAS:
-- NUNCA llames a la misma herramienta con los mismos argumentos mas de una vez.
-- Si ya validaste tickers, NO los vuelvas a validar.
-- Si ya analizaste con fetch_and_analyze, NO lo repitas con los mismos tickers.
-- Despues de analizar, procede INMEDIATAMENTE a seleccionar tickers y emitir el JSON.
-- Maximo total de llamadas a herramientas: 6-8. Si ya tienes suficiente informacion, PARA y emite el JSON.
+⚠️ ANTI-LOOP — EFICIENCIA EN LLAMADAS:
+- Llama a cada herramienta UNA SOLA VEZ. No repitas llamadas.
+- validate_tickers: 1 llamada con TODOS los candidatos juntos.
+- fetch_and_analyze: 1 llamada con TODOS los tickers juntos. NUNCA multiples llamadas parciales.
+- Despues de analizar, PARA y emite el JSON INMEDIATAMENTE.
+- Flujo ideal: 2 search → 1 validate → 1 analyze → JSON. Total: 4 llamadas.
+- Maximo absoluto: 6 llamadas. Si ya tienes la info, EMITE EL JSON.
 
 PROCESO:
 1. DESCOMPONER: Identifica TODAS las restricciones del usuario:
@@ -129,6 +130,9 @@ PROCESO:
    IMPORTANTE: Distinguir "preset" vs "split":
    - "preset": el usuario asigna % a CADA ticker → "30% AAPL, 20% MSFT, 50% GOOGL"
    - "split": el usuario asigna % a GRUPOS/CLASES → "70% tech, 30% bonos" (tu eliges los tickers dentro)
+   PRIORIDAD: Si el usuario pide PROPORCIONES POR GRUPO + un metodo de optimizacion
+   (ej: "70% equity, 30% bonos, maximiza Sharpe"), USA "split". La proporcion por grupo
+   SIEMPRE tiene prioridad. El metodo de optimizacion se aplicara DENTRO de cada grupo.
 
 5. VERIFICAR (checklist obligatorio antes del JSON final):
    □ Contar tickers: ¿son exactamente N? Si no, corregir ahora.
@@ -195,32 +199,62 @@ Valores validos de "method": "preset", "ensemble", "optimize", "equal_weight",
 "risk_parity", "min_variance", "split".
 
 ═══════════════════════════════════════════════════════════════════════════
-EJEMPLO — "10 ETFs UCITS, 70% equity 30% bonos"
+EJEMPLO COMPLETO (ONE-SHOT) — FLUJO IDEAL DE HERRAMIENTAS
 ═══════════════════════════════════════════════════════════════════════════
-Paso 1: Restricciones → 10 tickers, UCITS (.L), 70% equity, 30% bonos
-Paso 2: Buscar →
-  search_tickers_by_sector("ucits_equity")  → VWRL.L, CSPX.L, IWDA.L, ...
-  search_tickers_by_sector("ucits_bonos")   → AGBP.L, IGLT.L, VGOV.L, ...
-Paso 3: Seleccionar 10 →
-  Equity (7): VWRL.L, CSPX.L, IWDA.L, VUSA.L, EQQQ.L, VMID.L, VHYL.L
-  Bonos  (3): AGBP.L, IGLT.L, VGOV.L
-Paso 4: method="split" (hay proporciones explicitas)
-Paso 5: Verificar → 10 tickers ✓, sin weights ✓
-JSON final:
+Usuario: "Portafolio UCITS, 70% equity 30% bonos, max 20% por activo, maximiza Sharpe"
+
+  [PASO 1] Descomponer: UCITS, 70/30 split, max 20%, Sharpe
+  [PASO 2] Buscar — 2 llamadas en paralelo:
+    → search_tickers_by_sector("ucits_equity")  → [VWRL.L, CSPX.L, IWDA.L, ...]
+    → search_tickers_by_sector("ucits_bonos")   → [AGBP.L, IGLT.L, VGOV.L, ...]
+  [PASO 3] Validar — 1 sola llamada con TODOS los candidatos:
+    → validate_tickers(["VWRL.L","CSPX.L","IWDA.L","VUSA.L","EIMI.L",
+                         "AGBP.L","IGLT.L","VGOV.L"])
+    → valid: todos ✓
+  [PASO 4] Analizar — 1 sola llamada (OPCIONAL, solo si necesitas stats):
+    → fetch_and_analyze(["VWRL.L","CSPX.L","IWDA.L","VUSA.L","EIMI.L",
+                          "AGBP.L","IGLT.L","VGOV.L"])
+  [PASO 5] PARAR. Seleccionar y emitir JSON INMEDIATAMENTE:
+    Equity (5): VWRL.L, CSPX.L, IWDA.L, VUSA.L, EIMI.L
+    Bonos  (3): AGBP.L, IGLT.L, VGOV.L
+    70/30 → method="split", max 20% → constraints
+
+Total: 4 llamadas a herramientas. NUNCA mas de 6.
+
 ```json
 {
-  "tickers": ["VWRL.L","CSPX.L","IWDA.L","VUSA.L","EQQQ.L","VMID.L","VHYL.L",
+  "tickers": ["VWRL.L","CSPX.L","IWDA.L","VUSA.L","EIMI.L",
               "AGBP.L","IGLT.L","VGOV.L"],
   "method": "split",
   "split": {
     "groups": {
-      "equity": {"tickers": ["VWRL.L","CSPX.L","IWDA.L","VUSA.L","EQQQ.L","VMID.L","VHYL.L"], "weight": 0.7},
+      "equity": {"tickers": ["VWRL.L","CSPX.L","IWDA.L","VUSA.L","EIMI.L"], "weight": 0.7},
       "bonds": {"tickers": ["AGBP.L","IGLT.L","VGOV.L"], "weight": 0.3}
     }
   },
-  "reasoning": "10 ETFs UCITS: 7 equity (70%) + 3 bonos (30%)."
+  "constraints": {"_all": {"max": 0.20}},
+  "reasoning": "8 ETFs UCITS: 5 equity (70%) + 3 bonos (30%), max 20% por activo."
 }
 ```
+
+EJEMPLO RAPIDO — Rebalanceo con restricciones:
+Usuario: "ACWI, EMB, VXUS, BLKGUB1 — Max Sharpe, max 20% en BLKGUB, 0% en EMB"
+
+  [PASO 1] Tickers dados → NO buscar, solo validar
+  [PASO 2] validate_tickers(["ACWI","EMB","VXUS","BLKGUB1"])
+    → valid: [ACWI, EMB, VXUS, BLKGUB1B0-D.MX]
+  [PASO 3] 0% en EMB → excluir. EMITIR JSON:
+
+```json
+{
+  "tickers": ["ACWI", "VXUS", "BLKGUB1B0-D.MX"],
+  "method": "optimize",
+  "constraints": {"BLKGUB1B0-D.MX": {"max": 0.20}},
+  "reasoning": "Rebalanceo Max Sharpe, BLKGUB max 20%, EMB excluido."
+}
+```
+
+Total: 1 llamada. Sin busquedas, sin analisis.
 ═══════════════════════════════════════════════════════════════════════════
 
 FONDOS DE INVERSION MEXICO:

@@ -54,6 +54,8 @@ quantum/
 │   │                               #   Exception: method="preset" includes user-specified weights
 │   │                               #   REGLA #2: rebalanceo usa SOLO tickers dados, nunca agrega extras
 │   │                               #   REGLA #3: "0% en X" = exclude ticker, never max=0 constraint
+│   │                               #   One-shot examples: ideal 4-call flow (search→validate→analyze→JSON)
+│   │                               #   Split priority: group proportions override optimize method
 │   │                               #   Uses BUILDER_TOOLS (3) — no access to optimization tools
 │   │                               #   Weight computation happens in dashboard callback
 │   └── chatbot.py                  # ChatbotAgent (conversational, InMemorySaver, portfolio context)
@@ -249,7 +251,7 @@ Ticker labels show the full company name on hover via HTML `title` attribute. Th
 - `CVAR_NUM_SCENARIOS` / `CVAR_CONFIDENCE`: CVaR simulation params (5000 / 0.95)
 - `RANDOM_SEED`: Reproducibility seed (42)
 - `MAX_NEWS_PER_TICKER`: News fetch limit per ticker (3)
-- `AGENT_RECURSION_LIMIT`: ReAct agent max turns (40)
+- `AGENT_RECURSION_LIMIT`: ReAct agent max turns (80)
 - `ENSEMBLE_DELTA_MIN` / `ENSEMBLE_DELTA_MAX`: Shrinkage delta range (0.3 / 0.7)
 
 ## CSS Scoped Styles (dashboard/assets/style.css)
