@@ -3,6 +3,8 @@
 import numpy as np
 from scipy.optimize import minimize
 
+import config as cfg
+
 
 def optimize_max_sharpe(
     mean_returns: np.ndarray,
@@ -27,7 +29,7 @@ def optimize_max_sharpe(
         method="SLSQP",
         bounds=bounds,
         constraints=constraints,
-        options={"maxiter": 1000, "ftol": 1e-12},
+        options={"maxiter": cfg.SLSQP_MAX_ITER, "ftol": cfg.SLSQP_FTOL},
     )
     return result.x
 
@@ -69,7 +71,7 @@ def compute_efficient_frontier(
             method="SLSQP",
             bounds=bounds,
             constraints=constraints,
-            options={"maxiter": 1000, "ftol": 1e-12},
+            options={"maxiter": cfg.SLSQP_MAX_ITER, "ftol": cfg.SLSQP_FTOL},
         )
 
         frontier_vols[i] = np.sqrt(result.x @ cov_matrix @ result.x)

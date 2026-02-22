@@ -4,6 +4,8 @@ Uses Dash pattern-matching callbacks (MATCH/ALL) so sliders work
 dynamically with any set of tickers, not just the hardcoded Magnificent 7.
 """
 
+import uuid
+
 import numpy as np
 from dash import (
     Input,
@@ -14,8 +16,10 @@ from dash import (
     ALL,
     ctx,
     html,
+    dcc,
 )
 
+import config as cfg
 from config import TICKERS, get_ticker_color, get_ticker_name
 from engine import (
     fetch_stock_data,
@@ -81,8 +85,8 @@ def _run_full_pipeline(tickers, rf, num_sims, var_conf, preset_weights=None):
     }
 
     # Efficient frontier + CML
-    ef_vols, ef_rets = compute_efficient_frontier(mean_ret, cov_mat, rf, n_points=80)
-    max_vol = float(np.max(mc["volatilities"])) * 1.1
+    ef_vols, ef_rets = compute_efficient_frontier(mean_ret, cov_mat, rf, n_points=cfg.EF_NUM_POINTS)
+    max_vol = float(np.max(mc["volatilities"])) * cfg.CML_MAX_VOL_MULTIPLIER
     cml_x, cml_y = compute_capital_market_line(
         rf, optimal_info["return"], optimal_info["volatility"], max_vol
     )
@@ -174,8 +178,118 @@ def _run_full_pipeline(tickers, rf, num_sims, var_conf, preset_weights=None):
     )
 
 
+def _compute_position_styles(position):
+    """Return (layout_style, main_style, sidebar_style) for a chat position."""
+    if position == "left":
+        layout_style = {"flexDirection": "row"}
+        main_style = {"order": "1", "flex": "1"}
+        sidebar_style = {
+            "order": "-1",
+            "flex": "none",
+            "width": "25%",
+            "maxWidth": "25%",
+            "height": "100vh",
+            "maxHeight": "",
+            "borderLeft": "none",
+            "borderRight": "1px solid #30363d",
+            "borderTop": "none",
+            "borderBottom": "none",
+        }
+    elif position == "top":
+        layout_style = {"flexDirection": "column", "height": "100vh"}
+        main_style = {"order": "1", "flex": "1", "minHeight": "0"}
+        sidebar_style = {
+            "order": "-1",
+            "flex": "none",
+            "maxWidth": "100%",
+            "width": "100%",
+            "height": "25vh",
+            "maxHeight": "25vh",
+            "borderLeft": "none",
+            "borderRight": "none",
+            "borderTop": "none",
+            "borderBottom": "1px solid #30363d",
+        }
+    elif position == "bottom":
+        layout_style = {"flexDirection": "column", "height": "100vh"}
+        main_style = {"order": "-1", "flex": "1", "minHeight": "0"}
+        sidebar_style = {
+            "order": "1",
+            "flex": "none",
+            "maxWidth": "100%",
+            "width": "100%",
+            "height": "25vh",
+            "maxHeight": "25vh",
+            "borderLeft": "none",
+            "borderRight": "none",
+            "borderTop": "1px solid #30363d",
+            "borderBottom": "none",
+        }
+    else:  # right (default)
+        layout_style = {"flexDirection": "row"}
+        main_style = {"flex": "1"}
+        sidebar_style = {
+            "flex": "none",
+            "width": "25%",
+            "maxWidth": "25%",
+            "height": "100vh",
+            "maxHeight": "",
+            "borderLeft": "1px solid #30363d",
+            "borderRight": "none",
+            "borderTop": "none",
+            "borderBottom": "none",
+        }
+    return layout_style, main_style, sidebar_style
+
+
 def register_callbacks(app):
     """Register all Dash callbacks on *app*."""
+
+    # ── Callback 0: Switch chat position ────────────────────────────
+    @app.callback(
+        [
+            Output("app-layout", "style"),
+            Output("dashboard-main", "style"),
+            Output("chat-sidebar", "style"),
+            Output("store-chat-position", "data"),
+            Output("chat-pos-left", "className"),
+            Output("chat-pos-top", "className"),
+            Output("chat-pos-bottom", "className"),
+            Output("chat-pos-right", "className"),
+        ],
+        [
+            Input("chat-pos-left", "n_clicks"),
+            Input("chat-pos-top", "n_clicks"),
+            Input("chat-pos-right", "n_clicks"),
+            Input("chat-pos-bottom", "n_clicks"),
+        ],
+        State("store-chat-position", "data"),
+        prevent_initial_call=True,
+    )
+    def switch_chat_position(n_left, n_top, n_right, n_bottom, current_pos):
+        trigger = ctx.triggered_id
+        pos_map = {
+            "chat-pos-left": "left",
+            "chat-pos-top": "top",
+            "chat-pos-right": "right",
+            "chat-pos-bottom": "bottom",
+        }
+        new_pos = pos_map.get(trigger, current_pos or "right")
+
+        layout_style, main_style, sidebar_style = _compute_position_styles(new_pos)
+
+        base = "chat-pos-btn"
+        active = "chat-pos-btn chat-pos-btn-active"
+        return (
+            layout_style,
+            main_style,
+            sidebar_style,
+            new_pos,
+            active if new_pos == "left" else base,
+            active if new_pos == "top" else base,
+            active if new_pos == "bottom" else base,
+            active if new_pos == "right" else base,
+        )
 
     # ── Callback 1: EJECUTAR — run full MC pipeline ──────────────────
     @app.callback(
@@ -686,7 +800,7 @@ def register_callbacks(app):
         tickers = tickers or TICKERS
 
         try:
-            sentiment_data = fetch_all_news(tickers, max_per_ticker=3)
+            sentiment_data = fetch_all_news(tickers, max_per_ticker=cfg.MAX_NEWS_PER_TICKER)
         except Exception as exc:
             return html.Div(
                 f"Error obteniendo noticias: {exc}",
@@ -830,6 +944,124 @@ def register_callbacks(app):
 
         return html.Div(children)
 
+    # ── Callback: Chat init (generate thread_id on page load) ───────
+    @app.callback(
+        Output("store-chat-thread-id", "data"),
+        Input("store-chat-thread-id", "data"),
+    )
+    def init_chat_thread(current_id):
+        if current_id:
+            return no_update
+        return str(uuid.uuid4())
+
+    # ── Callback: Chat send message ─────────────────────────────────
+    @app.callback(
+        [
+            Output("chat-messages", "children"),
+            Output("chat-input", "value"),
+            Output("store-chat-history", "data"),
+            Output("chat-loading-target", "children"),
+        ],
+        [Input("chat-send", "n_clicks"), Input("chat-input", "n_submit")],
+        [
+            State("chat-input", "value"),
+            State("store-chat-history", "data"),
+            State("store-chat-thread-id", "data"),
+            State("store-optimal-weights", "data"),
+            State("store-annual-stats", "data"),
+            State("store-ensemble-results", "data"),
+            State("store-tickers", "data"),
+        ],
+        prevent_initial_call=True,
+    )
+    def send_chat_message(
+        n_clicks, n_submit, text, history, thread_id,
+        opt_data, stats_data, ensemble_data, tickers,
+    ):
+        if not text or not text.strip():
+            return no_update, no_update, no_update, no_update
+
+        text = text.strip()
+        history = history or []
+
+        # Add user message
+        history.append({"role": "user", "content": text})
+
+        # Check if portfolio exists
+        if opt_data is None:
+            reply = "Primero ejecuta una simulacion (boton **EJECUTAR** o usa el **Constructor NL**) para que pueda ayudarte con tu portafolio."
+            history.append({"role": "assistant", "content": reply})
+            return _build_chat_bubbles(history), "", history, ""
+
+        # Build portfolio context
+        portfolio_context = _build_portfolio_context(
+            opt_data, stats_data, ensemble_data, tickers
+        )
+
+        # Chat with agent
+        try:
+            from agents.chatbot import ChatbotAgent
+            chatbot = ChatbotAgent()
+            reply = chatbot.chat(text, portfolio_context, thread_id or "default")
+        except ImportError:
+            reply = "**Error:** Dependencias de LangGraph/LangChain no instaladas."
+        except Exception as exc:
+            reply = f"**Error:** `{exc}`"
+
+        history.append({"role": "assistant", "content": reply})
+        return _build_chat_bubbles(history), "", history, ""
+
+
+def _build_chat_bubbles(history):
+    """Convert chat history list into Dash div elements."""
+    bubbles = []
+    for msg in history:
+        if msg["role"] == "user":
+            bubbles.append(
+                html.Div(
+                    msg["content"],
+                    className="chat-bubble chat-bubble-user",
+                )
+            )
+        else:
+            bubbles.append(
+                html.Div(
+                    dcc.Markdown(
+                        msg["content"],
+                        style={"margin": "0", "fontSize": "inherit", "lineHeight": "inherit"},
+                    ),
+                    className="chat-bubble chat-bubble-assistant",
+                )
+            )
+    return bubbles
+
+
+def _build_portfolio_context(opt_data, stats_data, ensemble_data, tickers):
+    """Build a context dict from dashboard stores for the chatbot."""
+    context = {}
+
+    if opt_data:
+        context["tickers"] = opt_data.get("tickers", tickers or [])
+        context["weights"] = opt_data.get("weights", [])
+
+    if stats_data and opt_data:
+        stats_tickers = stats_data.get("tickers", tickers or [])
+        opt_weights = np.array(opt_data.get("weights", []))
+        mean_ret = np.array(stats_data.get("mean_returns", []))
+        cov_mat = np.array(stats_data.get("cov_matrix", []))
+
+        if len(opt_weights) > 0 and len(mean_ret) > 0:
+            try:
+                metrics = calc_portfolio_metrics(opt_weights, mean_ret, cov_mat, 0.04, 0.95)
+                context["metrics"] = metrics
+            except Exception:
+                pass
+
+    if ensemble_data:
+        context["ensemble"] = ensemble_data
+
+    return context
+
 
 def _execute_agent_analysis(portfolio_data, ensemble_data):
     """Run the multi-agent debate system on portfolio data.
@@ -840,7 +1072,7 @@ def _execute_agent_analysis(portfolio_data, ensemble_data):
 
     # Fetch sentiment for agents
     try:
-        sentiment_data = fetch_all_news(tickers, max_per_ticker=3)
+        sentiment_data = fetch_all_news(tickers, max_per_ticker=cfg.MAX_NEWS_PER_TICKER)
     except Exception:
         sentiment_data = {"por_ticker": {}, "score_general": 0, "resumen": ""}
 

@@ -43,15 +43,22 @@ quantum/
 │   │                               #   SECTOR_TICKERS: ~106 categories, ~380 unique tickers
 │   │                               #   TICKER_ALIASES: short fund names → Yahoo Finance .MX tickers
 │   │                               #   Covers: sectors, countries, cryptos, indices, futures, ETFs, UCITS, SIC
-│   └── portfolio_builder.py        # PortfolioBuilderAgent (ReAct agent, Spanish prompt, geo-aware)
+│   ├── portfolio_builder.py        # PortfolioBuilderAgent (ReAct agent, Spanish prompt, geo-aware)
+│   └── chatbot.py                  # ChatbotAgent (conversational, InMemorySaver, portfolio context)
 ├── dashboard/                      # Dash UI (dark mode, Plotly charts, all in Spanish)
-│   ├── layout.py                   # 7-row layout: header, NL+params+metrics, sliders+charts,
-│   │                               #   correlation+risk_decomp+ensemble, drawdown+performance,
-│   │                               #   sentiment+fundamental, agents. Stores: mc, optimal, stats,
-│   │                               #   tickers, ensemble-results, prices-data.
-│   ├── callbacks.py                # 11 callbacks: ejecutar, sliders, optimo, igual, random,
-│   │                               #   norm, agents (manual), auto-agents (store-triggered),
-│   │                               #   NL builder, weight displays, sentiment+fundamental
+│   ├── layout.py                   # Adaptive layout: dashboard (3/4) + chat sidebar (1/4)
+│   │                               #   Chat dynamically repositionable: right/left/top/bottom
+│   │                               #   IDs: app-layout, dashboard-main (for inline style switching)
+│   │                               #   Dashboard has 7 rows: header, NL+params+metrics,
+│   │                               #   sliders+charts, corr+risk_decomp+ensemble,
+│   │                               #   drawdown+performance, sentiment, agents.
+│   │                               #   Stores: mc, optimal, stats, tickers, ensemble-results,
+│   │                               #   prices-data, chat-history, chat-thread-id, chat-position.
+│   ├── callbacks.py                # 14 callbacks: chat-position (CB0), ejecutar, sliders,
+│   │                               #   optimo, igual, random, norm, agents (manual),
+│   │                               #   auto-agents (store-triggered), NL builder, weight
+│   │                               #   displays, sentiment+fundamental, chat-init, chat-send
+│   │                               #   Helper: _compute_position_styles(pos) → 3 style dicts
 │   ├── components/
 │   │   ├── parameters.py           # Tasa Libre%, Simulaciones, VaR Nivel% inputs
 │   │   ├── metrics_cards.py        # 4 KPI cards (Sharpe, Return, Vol, VaR)
@@ -66,10 +73,14 @@ quantum/
 │   │   ├── performance_chart.py    # Normalized historical lines per asset + portfolio
 │   │   ├── sentiment_panel.py      # News button + per-ticker sentiment + fundamental analysis
 │   │   ├── agent_panel.py          # AI analysis output panel (auto-triggered + manual re-run)
-│   │   └── nl_input.py             # Natural language portfolio input panel
+│   │   ├── nl_input.py             # Natural language portfolio input panel
+│   │   └── chat_widget.py          # Chat sidebar panel (1/4, dynamic position toggles)
+│   │                               #   id=chat-sidebar, 4 toggle buttons (◀▲▼▶)
+│   │                               #   store-chat-position (right|left|top|bottom)
 │   └── assets/
 │       └── style.css               # Dark mode theme (#0d1117, accent #00d4aa)
-│                                   #   Scoped heading styles for agent-panel and #sentiment-output
+│                                   #   Scoped heading styles for agent-panel, #sentiment-output, chat
+│                                   #   .chat-pos-btn / .chat-pos-btn-active toggle styles
 └── referencias/                    # Reference materials (do not modify)
 ```
 
@@ -82,7 +93,7 @@ quantum/
 | Data | yfinance | Historical prices, fundamentals, news (.news content format) |
 | Sentiment | yfinance .news + keyword scoring | Bilingual ES/EN sentiment per ticker |
 | Dashboard | Dash + Plotly | Interactive dark mode UI (Spanish) |
-| Agents | LangGraph + LangChain | Multi-agent debate + NL builder + fundamental analyst |
+| Agents | LangGraph + LangChain | Multi-agent debate + NL builder + fundamental analyst + chatbot |
 | LLM | OpenAI / Anthropic (configurable) | AI portfolio analysis |
 
 ## Data Flow
@@ -92,6 +103,8 @@ quantum/
 3. **ACTUALIZAR NOTICIAS** → `engine/sentiment.py` fetches yfinance news → keyword scoring → **`agents/fundamental_analyst.py`** combines quant metrics + news into a ponderacion cuantitativo-fundamental → renders per-ticker sentiment + AI fundamental analysis
 4. **Analisis AI (auto-triggered)** → fires automatically when `store-optimal-weights` changes (from EJECUTAR or NL Builder) → `agents/graph.py` runs LangGraph workflow with ensemble + sentiment data: Quant Analyst → Risk Analyst ↔ Market Analyst (debate) → Portfolio Advisor → displays recommendation. Also available as manual re-run via button.
 5. **CONSTRUIR PORTAFOLIO** → `agents/portfolio_builder.py` runs ReAct agent: interprets NL prompt → selects tickers → validates → assigns weights (manual for splits, SLSQP otherwise) → callback extracts `weights` from agent result → `_run_full_pipeline(preset_weights=weight_map)` uses agent weights instead of re-running SLSQP → updates `store-tickers` + runs full pipeline (MC + ensemble + all charts) → **auto-triggers AI Analysis** (see #4). When agent returns no weights or invalid weights, falls back to SLSQP.
+6. **Chatbot** → always-visible sidebar (1/4, repositionable via toggle buttons) → user types question → callback reads all portfolio stores → builds context dict → `agents/chatbot.py` ChatbotAgent.chat() with InMemorySaver for multi-turn memory → returns markdown response rendered in chat bubble.
+7. **Chat position toggle** → click ◀▲▼▶ buttons → `switch_chat_position` callback updates inline styles on `#app-layout`, `#dashboard-main`, `#chat-sidebar` via `_compute_position_styles(pos)` → CSS `flex-direction` + `order` switch without DOM rebuild → chat history and all stores preserved.
 
 ## Ensemble Optimization (engine/ensemble.py)
 
@@ -126,6 +139,11 @@ Uses `langgraph.prebuilt.create_react_agent` with 6 tools from `agents/tools.py`
 - `run_optimization` — runs full MC + SLSQP pipeline, returns optimal weights + metrics
 - `get_portfolio_metrics` — calculates metrics for specific weight allocation
 - `run_ensemble_optimization` — runs all 7 methods + ensemble, returns comparison
+
+### Chatbot Interactivo (agents/chatbot.py)
+Conversational agent using `create_react_agent` + `InMemorySaver` for multi-turn memory. Receives full portfolio context (tickers, weights, metrics, ensemble, sentiment) injected as `[CONTEXTO DEL PORTAFOLIO]` block on each message. System prompt in Spanish. No tools (v1 — pure conversational with context). Thread ID (UUID) generated per page load.
+
+Dashboard integration: always-visible sidebar (`chat_widget.py`, 1/4 of screen, dynamically repositionable) with 3 callbacks — init (generate thread_id), send (build context from stores → ChatbotAgent.chat() → render markdown bubbles), position toggle (switch_chat_position). Layout uses CSS flexbox: `.app-layout` (flex row/column) → `.dashboard-main` (flex: 1, fills remaining space) + `.chat-sidebar` (flex: none, width: 25%). Position toggle buttons (◀▲▼▶) in chat header switch between right/left/top/bottom by changing inline styles on 3 container IDs (`app-layout`, `dashboard-main`, `chat-sidebar`) — no DOM rebuild, all state preserved. `_compute_position_styles(pos)` returns the 3 style dicts per position. Responsive: stacks vertically below 1200px.
 
 ### SECTOR_TICKERS Asset Coverage (agents/tools.py)
 ~106 curated mappings, ~380 unique tickers:
@@ -166,6 +184,9 @@ Ticker labels show the full company name on hover via HTML `title` attribute. Th
 - `store-annual-stats` — annualized mean returns + covariance matrix
 - `store-ensemble-results` — all method results for agent consumption
 - `store-prices-data` — serialized prices for drawdown/performance charts
+- `store-chat-history` — chat message history (list of {role, content} dicts)
+- `store-chat-thread-id` — UUID for chatbot memory thread (generated on page load)
+- `store-chat-position` — current chat sidebar position (right|left|top|bottom)
 
 ## Key Config (config.py)
 
@@ -177,10 +198,19 @@ Ticker labels show the full company name on hover via HTML `title` attribute. Th
 - `DEFAULT_VAR_CONFIDENCE`: 95%
 - `LLM_PROVIDER` / `LLM_MODEL`: Set via .env
 - `THEME`: Dark mode color palette
+- `SLSQP_MAX_ITER` / `SLSQP_FTOL`: SLSQP optimizer defaults (1000 / 1e-12)
+- `RISK_PARITY_MAX_ITER` / `RISK_PARITY_FTOL`: Risk parity optimizer (2000 / 1e-14)
+- `MIN_WEIGHT_BOUND`: Lower bound for risk parity weights (1e-6)
+- `EF_NUM_POINTS`: Efficient frontier resolution (80 points)
+- `CML_MAX_VOL_MULTIPLIER`: CML extension factor (1.1)
+- `CVAR_NUM_SCENARIOS` / `CVAR_CONFIDENCE`: CVaR simulation params (5000 / 0.95)
+- `RANDOM_SEED`: Reproducibility seed (42)
+- `MAX_NEWS_PER_TICKER`: News fetch limit per ticker (3)
+- `AGENT_RECURSION_LIMIT`: ReAct agent max turns (40)
 
 ## CSS Scoped Styles (dashboard/assets/style.css)
 
-Markdown rendered inside `.agent-panel` and `#sentiment-output` has scoped heading sizes (h1: 0.85rem, h2: 0.8rem, h3: 0.75rem) to keep content compact within dark-mode panels. The agent panel h1 gets an accent-colored bottom border as a visual separator.
+Markdown rendered inside `.agent-panel`, `#sentiment-output`, and `.chat-bubble-assistant` has scoped heading sizes (h1: 0.85rem, h2: 0.8rem, h3: 0.75rem) to keep content compact within dark-mode panels. The agent panel h1 gets an accent-colored bottom border as a visual separator. Chat sidebar uses `position: sticky; top: 0; height: 100vh` to stay pinned while the dashboard scrolls. Position toggle buttons (`.chat-pos-btn`, `.chat-pos-btn-active`) are 22x22px compact buttons with accent highlight on active state. Chat sidebar base CSS sets `flex: none; width: 25%; max-width: 25%` — inline styles from the callback override borders and dimensions per position.
 
 ## Development Commands
 
@@ -193,19 +223,11 @@ python -c "from config import get_ticker_name; print(get_ticker_name('AMX'))"  #
 
 ## Next Steps
 
-### Chatbot Interactivo
-Agregar un chatbot conversacional que permita al usuario interactuar con todo lo que genero la herramienta:
-- **Contexto completo**: El chatbot debe tener acceso al estado actual del portafolio (pesos, metricas, resultados MC, ensemble, sentimiento, analisis AI) para responder preguntas contextuales.
-- **Preguntas sobre resultados**: "¿Por que BLKGUB1 tiene tanto peso?", "¿Que pasa si reduzco EMB?", "Explica el Sharpe Ratio de mi portafolio", "¿Cual es mi exposicion a mercados emergentes?"
-- **Modificaciones via chat**: "Sube ACWI a 10%", "Agrega BTC-USD al portafolio", "Cambia a un perfil mas conservador" — el chatbot interpreta y ejecuta cambios en los sliders/tickers.
-- **Analisis comparativo**: "Compara mi portafolio con el S&P 500", "¿Como se compara vs el ensemble de minima varianza?", "Muestra el drawdown si hubiera invertido hace 5 anos"
-- **Educativo**: Explicar conceptos (frontera eficiente, VaR, CML, HRP) en el contexto del portafolio actual del usuario.
-- **Implementacion sugerida**:
-  - Componente Dash: panel de chat colapsable en la esquina inferior derecha (estilo widget)
-  - Backend: LangGraph agent con acceso a los stores del dashboard (via callbacks)
-  - Tools del chatbot: leer estado actual, modificar pesos, re-ejecutar pipeline, consultar historico
-  - Memoria: mantener contexto de la conversacion dentro de la sesion
-  - UI: burbujas de chat con markdown rendering, dark mode consistente con el tema (#0d1117)
+### Chatbot v2 — Tools y Modificaciones
+Ampliar el chatbot (actualmente conversacional puro, v1) con herramientas para:
+- **Modificaciones via chat**: "Sube ACWI a 10%", "Agrega BTC-USD al portafolio" — interpretar y ejecutar cambios en sliders/tickers
+- **Analisis comparativo**: "Compara mi portafolio con el S&P 500", "Muestra el drawdown si hubiera invertido hace 5 anos"
+- **Re-ejecutar pipeline**: tool para re-correr MC + ensemble desde el chat
 
 ## Reference Materials
 

@@ -148,7 +148,7 @@ class PortfolioAgentsGraph:
         if sentiment_data is None:
             try:
                 from engine.sentiment import fetch_all_news
-                sentiment_data = fetch_all_news(tickers, max_per_ticker=3)
+                sentiment_data = fetch_all_news(tickers, max_per_ticker=cfg.MAX_NEWS_PER_TICKER)
             except Exception:
                 sentiment_data = {}
 

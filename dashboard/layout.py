@@ -17,189 +17,216 @@ from dashboard.components.ensemble_table import create_ensemble_table
 from dashboard.components.drawdown_chart import create_drawdown_figure
 from dashboard.components.performance_chart import create_performance_figure
 from dashboard.components.sentiment_panel import create_sentiment_panel
+from dashboard.components.chat_widget import create_chat_panel
 
 
 def _header():
-    """Build the page header with title and badges."""
+    """Build the compact page header."""
     return html.Div(
-        style={"marginBottom": "24px"},
+        className="dash-header",
         children=[
-            html.H1("QUANT PORTFOLIO OPTIMIZER", className="header-title"),
             html.Div(
-                "PORTAFOLIO DINAMICO  ·  SIMULACION MONTE CARLO  ·  TEORIA MODERNA DE PORTAFOLIOS",
-                className="header-subtitle",
+                children=[
+                    html.H1("QUANT PORTFOLIO OPTIMIZER", className="header-title"),
+                    html.Div(
+                        "MONTE CARLO  ·  TEORIA MODERNA DE PORTAFOLIOS  ·  ENSEMBLE",
+                        className="header-subtitle",
+                    ),
+                ],
             ),
             html.Div(
-                style={"marginTop": "10px"},
+                className="header-badges-row",
                 children=[
-                    html.Span("10,000 SIMS", className="header-badge"),
+                    html.Span("10K SIMS", className="header-badge"),
                     html.Span("VAR 95%", className="header-badge"),
-                    html.Span("MAX SHARPE", className="header-badge"),
+                    html.Span("SHARPE", className="header-badge"),
                     html.Span("ENSEMBLE", className="header-badge"),
-                    html.Span("SENTIMIENTO", className="header-badge"),
-                    html.Span("NL BUILDER", className="header-badge"),
+                    html.Span("SENTIMENT", className="header-badge"),
+                    html.Span("NL BUILD", className="header-badge"),
+                    html.Span("CHATBOT", className="header-badge"),
                 ],
             ),
         ],
     )
 
 
-def create_layout():
-    """Return the full app layout."""
-    return dbc.Container(
-        fluid=True,
-        style={"padding": "24px 32px", "maxWidth": "1600px"},
+def _dashboard_content():
+    """Build the main dashboard content (left 2/3)."""
+    return html.Div(
+        id="dashboard-main",
+        className="dashboard-main",
         children=[
-            # Row 1 — Header
-            dbc.Row(dbc.Col(_header(), width=12), className="mb-3"),
+            # Header
+            _header(),
 
-            # Row 2 — NL Builder + Parameters + Metrics
-            dbc.Row(
-                [
-                    dbc.Col(create_nl_input_panel(), xs=12, lg=3),
-                    dbc.Col(create_parameters_panel(), xs=12, lg=3),
-                    dbc.Col(create_metrics_cards(), xs=12, lg=6),
-                ],
-                className="mb-3 g-3",
-            ),
-
-            # Row 3 — Sliders + Charts
-            dbc.Row(
-                [
-                    dbc.Col(
-                        html.Div(
-                            id="sliders-container",
-                            children=create_sliders_panel(),
-                        ),
-                        xs=12,
-                        lg=3,
-                    ),
-                    dbc.Col(
-                        html.Div(
-                            className="graph-card",
-                            children=[
-                                dcc.Graph(
-                                    id="frontier-chart",
-                                    figure=create_frontier_figure(),
-                                    config={"displayModeBar": True, "displaylogo": False},
-                                    style={"height": "480px"},
-                                ),
-                            ],
-                        ),
-                        xs=12,
-                        lg=5,
-                    ),
-                    dbc.Col(
-                        html.Div(
-                            className="graph-card",
-                            children=[
-                                dcc.Graph(
-                                    id="weights-chart",
-                                    figure=create_weights_figure(),
-                                    config={"displayModeBar": False},
-                                    style={"height": "480px"},
-                                ),
-                            ],
-                        ),
-                        xs=12,
-                        lg=4,
+            # ── Section 1: Controls ─────────────────────────────────
+            html.Div(
+                className="dash-section",
+                children=[
+                    dbc.Row(
+                        [
+                            dbc.Col(create_nl_input_panel(), xs=12, md=4),
+                            dbc.Col(create_parameters_panel(), xs=12, md=3),
+                            dbc.Col(create_metrics_cards(), xs=12, md=5),
+                        ],
+                        className="g-2",
                     ),
                 ],
-                className="mb-3 g-3",
             ),
 
-            # Row 4 — Correlation + Risk Decomposition + Ensemble Table
-            dbc.Row(
-                [
-                    dbc.Col(
-                        html.Div(
-                            className="graph-card",
-                            children=[
-                                dcc.Graph(
-                                    id="correlation-chart",
-                                    figure=create_correlation_figure(),
-                                    config={"displayModeBar": False},
-                                    style={"height": "400px"},
+            # ── Section 2: Portfolio Weights + Frontier + Bar Chart ──
+            html.Div(
+                className="dash-section",
+                children=[
+                    dbc.Row(
+                        [
+                            dbc.Col(
+                                html.Div(
+                                    id="sliders-container",
+                                    children=create_sliders_panel(),
                                 ),
-                            ],
-                        ),
-                        xs=12,
-                        lg=4,
-                    ),
-                    dbc.Col(
-                        html.Div(
-                            className="graph-card",
-                            children=[
-                                dcc.Graph(
-                                    id="risk-decomposition-chart",
-                                    figure=create_risk_decomposition_figure(),
-                                    config={"displayModeBar": False},
-                                    style={"height": "400px"},
+                                xs=12,
+                                md=3,
+                            ),
+                            dbc.Col(
+                                html.Div(
+                                    className="graph-card",
+                                    children=[
+                                        dcc.Graph(
+                                            id="frontier-chart",
+                                            figure=create_frontier_figure(),
+                                            config={"displayModeBar": True, "displaylogo": False},
+                                            style={"height": "420px"},
+                                        ),
+                                    ],
                                 ),
-                            ],
-                        ),
-                        xs=12,
-                        lg=4,
-                    ),
-                    dbc.Col(
-                        html.Div(
-                            id="ensemble-table-container",
-                            children=create_ensemble_table(),
-                        ),
-                        xs=12,
-                        lg=4,
+                                xs=12,
+                                md=5,
+                            ),
+                            dbc.Col(
+                                html.Div(
+                                    className="graph-card",
+                                    children=[
+                                        dcc.Graph(
+                                            id="weights-chart",
+                                            figure=create_weights_figure(),
+                                            config={"displayModeBar": False},
+                                            style={"height": "420px"},
+                                        ),
+                                    ],
+                                ),
+                                xs=12,
+                                md=4,
+                            ),
+                        ],
+                        className="g-2",
                     ),
                 ],
-                className="mb-3 g-3",
             ),
 
-            # Row 5 — Drawdown + Historical Performance
-            dbc.Row(
-                [
-                    dbc.Col(
-                        html.Div(
-                            className="graph-card",
-                            children=[
-                                dcc.Graph(
-                                    id="drawdown-chart",
-                                    figure=create_drawdown_figure(),
-                                    config={"displayModeBar": True, "displaylogo": False},
-                                    style={"height": "380px"},
+            # ── Section 3: Correlation + Risk + Ensemble ────────────
+            html.Div(
+                className="dash-section",
+                children=[
+                    dbc.Row(
+                        [
+                            dbc.Col(
+                                html.Div(
+                                    className="graph-card",
+                                    children=[
+                                        dcc.Graph(
+                                            id="correlation-chart",
+                                            figure=create_correlation_figure(),
+                                            config={"displayModeBar": False},
+                                            style={"height": "350px"},
+                                        ),
+                                    ],
                                 ),
-                            ],
-                        ),
-                        xs=12,
-                        lg=6,
-                    ),
-                    dbc.Col(
-                        html.Div(
-                            className="graph-card",
-                            children=[
-                                dcc.Graph(
-                                    id="performance-chart",
-                                    figure=create_performance_figure(),
-                                    config={"displayModeBar": True, "displaylogo": False},
-                                    style={"height": "380px"},
+                                xs=12,
+                                md=4,
+                            ),
+                            dbc.Col(
+                                html.Div(
+                                    className="graph-card",
+                                    children=[
+                                        dcc.Graph(
+                                            id="risk-decomposition-chart",
+                                            figure=create_risk_decomposition_figure(),
+                                            config={"displayModeBar": False},
+                                            style={"height": "350px"},
+                                        ),
+                                    ],
                                 ),
-                            ],
-                        ),
-                        xs=12,
-                        lg=6,
+                                xs=12,
+                                md=4,
+                            ),
+                            dbc.Col(
+                                html.Div(
+                                    id="ensemble-table-container",
+                                    children=create_ensemble_table(),
+                                ),
+                                xs=12,
+                                md=4,
+                            ),
+                        ],
+                        className="g-2",
                     ),
                 ],
-                className="mb-3 g-3",
             ),
 
-            # Row 6 — Sentiment Panel
-            dbc.Row(
-                dbc.Col(create_sentiment_panel(), xs=12),
-                className="mb-3",
+            # ── Section 4: Drawdown + Performance ───────────────────
+            html.Div(
+                className="dash-section",
+                children=[
+                    dbc.Row(
+                        [
+                            dbc.Col(
+                                html.Div(
+                                    className="graph-card",
+                                    children=[
+                                        dcc.Graph(
+                                            id="drawdown-chart",
+                                            figure=create_drawdown_figure(),
+                                            config={"displayModeBar": True, "displaylogo": False},
+                                            style={"height": "320px"},
+                                        ),
+                                    ],
+                                ),
+                                xs=12,
+                                md=6,
+                            ),
+                            dbc.Col(
+                                html.Div(
+                                    className="graph-card",
+                                    children=[
+                                        dcc.Graph(
+                                            id="performance-chart",
+                                            figure=create_performance_figure(),
+                                            config={"displayModeBar": True, "displaylogo": False},
+                                            style={"height": "320px"},
+                                        ),
+                                    ],
+                                ),
+                                xs=12,
+                                md=6,
+                            ),
+                        ],
+                        className="g-2",
+                    ),
+                ],
             ),
 
-            # Row 7 — Agent panel
-            dbc.Row(
-                dbc.Col(create_agent_panel(), xs=12),
-                className="mb-4",
+            # ── Section 5: Sentiment ────────────────────────────────
+            html.Div(
+                className="dash-section",
+                children=[create_sentiment_panel()],
+            ),
+
+            # ── Section 6: Agent panel ──────────────────────────────
+            html.Div(
+                className="dash-section",
+                style={"marginBottom": "24px"},
+                children=[create_agent_panel()],
             ),
 
             # Hidden stores
@@ -209,5 +236,17 @@ def create_layout():
             dcc.Store(id="store-tickers", data=TICKERS),
             dcc.Store(id="store-ensemble-results"),
             dcc.Store(id="store-prices-data"),
+        ],
+    )
+
+
+def create_layout():
+    """Return the full app layout — dashboard (left 2/3) + chat (right 1/3)."""
+    return html.Div(
+        id="app-layout",
+        className="app-layout",
+        children=[
+            _dashboard_content(),
+            create_chat_panel(),
         ],
     )

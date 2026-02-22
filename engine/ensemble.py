@@ -5,6 +5,7 @@ from scipy.optimize import minimize
 from scipy.cluster.hierarchy import linkage, leaves_list
 from scipy.spatial.distance import squareform
 
+import config as cfg
 from config import DEFAULT_RISK_FREE_RATE, DEFAULT_VAR_CONFIDENCE
 from engine.risk import calc_portfolio_metrics
 
@@ -28,7 +29,7 @@ def min_variance_portfolio(
         method="SLSQP",
         bounds=bounds,
         constraints=constraints,
-        options={"maxiter": 1000, "ftol": 1e-12},
+        options={"maxiter": cfg.SLSQP_MAX_ITER, "ftol": cfg.SLSQP_FTOL},
     )
     return result.x
 
@@ -51,7 +52,7 @@ def risk_parity_portfolio(
         return np.sum((risk_contrib - target) ** 2)
 
     constraints = [{"type": "eq", "fun": lambda w: np.sum(w) - 1.0}]
-    bounds = [(1e-6, 1.0)] * n
+    bounds = [(cfg.MIN_WEIGHT_BOUND, 1.0)] * n
     x0 = np.ones(n) / n
 
     result = minimize(
@@ -60,7 +61,7 @@ def risk_parity_portfolio(
         method="SLSQP",
         bounds=bounds,
         constraints=constraints,
-        options={"maxiter": 2000, "ftol": 1e-14},
+        options={"maxiter": cfg.RISK_PARITY_MAX_ITER, "ftol": cfg.RISK_PARITY_FTOL},
     )
     return result.x
 
@@ -91,7 +92,7 @@ def max_diversification_portfolio(
         method="SLSQP",
         bounds=bounds,
         constraints=constraints,
-        options={"maxiter": 1000, "ftol": 1e-12},
+        options={"maxiter": cfg.SLSQP_MAX_ITER, "ftol": cfg.SLSQP_FTOL},
     )
     return result.x
 
@@ -169,14 +170,14 @@ def min_cvar_portfolio(
     mean_returns: np.ndarray,
     cov_matrix: np.ndarray,
     rf: float = DEFAULT_RISK_FREE_RATE,
-    confidence: float = 0.95,
-    n_scenarios: int = 5000,
+    confidence: float = cfg.CVAR_CONFIDENCE,
+    n_scenarios: int = cfg.CVAR_NUM_SCENARIOS,
 ) -> np.ndarray:
     """Minimize Conditional Value-at-Risk using parametric scenarios."""
     n = len(mean_returns)
 
     # Generate scenarios from multivariate normal
-    rng = np.random.default_rng(42)
+    rng = np.random.default_rng(cfg.RANDOM_SEED)
     daily_mean = mean_returns / 252
     daily_cov = cov_matrix / 252
     scenarios = rng.multivariate_normal(daily_mean, daily_cov, size=n_scenarios)
@@ -198,7 +199,7 @@ def min_cvar_portfolio(
         method="SLSQP",
         bounds=bounds,
         constraints=constraints,
-        options={"maxiter": 1000, "ftol": 1e-12},
+        options={"maxiter": cfg.SLSQP_MAX_ITER, "ftol": cfg.SLSQP_FTOL},
     )
     return result.x
 

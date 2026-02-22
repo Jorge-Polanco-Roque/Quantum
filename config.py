@@ -71,6 +71,26 @@ def get_ticker_color(ticker: str) -> str:
     idx = hash(ticker) % len(_EXTRA_COLORS)
     return _EXTRA_COLORS[idx]
 
+# ── Optimization defaults ─────────────────────────────────────────
+SLSQP_MAX_ITER = 1000
+SLSQP_FTOL = 1e-12
+RISK_PARITY_MAX_ITER = 2000
+RISK_PARITY_FTOL = 1e-14
+MIN_WEIGHT_BOUND = 1e-6
+EF_NUM_POINTS = 80
+CML_MAX_VOL_MULTIPLIER = 1.1
+
+# ── Simulation ────────────────────────────────────────────────────
+CVAR_NUM_SCENARIOS = 5000
+CVAR_CONFIDENCE = 0.95
+RANDOM_SEED = 42
+
+# ── Sentiment / News ─────────────────────────────────────────────
+MAX_NEWS_PER_TICKER = 3
+
+# ── Agent ─────────────────────────────────────────────────────────
+AGENT_RECURSION_LIMIT = 40
+
 # ── Monte Carlo defaults ───────────────────────────────────────────
 DEFAULT_NUM_SIMULATIONS = 10_000
 DEFAULT_RISK_FREE_RATE = 0.04       # 4%

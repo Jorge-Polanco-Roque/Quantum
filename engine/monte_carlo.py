@@ -2,6 +2,7 @@
 
 import numpy as np
 
+import config as cfg
 from config import DEFAULT_NUM_SIMULATIONS, DEFAULT_RISK_FREE_RATE
 
 
@@ -18,7 +19,8 @@ def run_monte_carlo(
     n_assets = len(mean_returns)
 
     # Dirichlet(1,...,1) gives uniform random weights on the simplex
-    weights = np.random.dirichlet(np.ones(n_assets), size=num_sims)
+    rng = np.random.default_rng(cfg.RANDOM_SEED)
+    weights = rng.dirichlet(np.ones(n_assets), size=num_sims)
 
     # Portfolio expected returns: w @ mu  (vectorized)
     port_returns = weights @ mean_returns

@@ -273,7 +273,7 @@ class PortfolioBuilderAgent:
         try:
             result = self._agent.invoke(
                 {"messages": [{"role": "user", "content": user_prompt}]},
-                {"recursion_limit": 40},
+                {"recursion_limit": cfg.AGENT_RECURSION_LIMIT},
             )
 
             # Extract the final AI message
