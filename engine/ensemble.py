@@ -10,17 +10,79 @@ from config import DEFAULT_RISK_FREE_RATE, DEFAULT_VAR_CONFIDENCE
 from engine.risk import calc_portfolio_metrics
 
 
+# ── Constraint helpers ───────────────────────────────────────────────
+
+def _clip_to_bounds(weights: np.ndarray, bounds) -> np.ndarray:
+    """Project *weights* onto the simplex intersected with box bounds.
+
+    Iteratively fixes bound violations by clamping violated assets and
+    redistributing the excess/deficit among assets that still have room
+    to move.  Returns *weights* unchanged when *bounds* is ``None``.
+    """
+    if bounds is None:
+        return weights
+
+    n = len(weights)
+    lo = np.array([b[0] for b in bounds])
+    hi = np.array([b[1] for b in bounds])
+    w = weights.copy()
+
+    # Track which assets are pinned at a bound
+    pinned = np.zeros(n, dtype=bool)
+
+    for _ in range(n * 2):
+        # Clip to bounds
+        w = np.clip(w, lo, hi)
+        residual = 1.0 - w.sum()
+        if abs(residual) < 1e-12:
+            break
+
+        # Find free (not yet pinned) assets
+        free_mask = ~pinned
+        if not free_mask.any():
+            break
+
+        if residual > 0:
+            # Need to add weight — only assets below their upper bound can grow
+            can_grow = free_mask & (w < hi - 1e-12)
+            if not can_grow.any():
+                break
+            room = hi[can_grow] - w[can_grow]
+            total_room = room.sum()
+            if total_room > 0:
+                add = np.minimum(room, residual * room / total_room)
+                w[can_grow] += add
+        else:
+            # Need to remove weight — only assets above their lower bound can shrink
+            can_shrink = free_mask & (w > lo + 1e-12)
+            if not can_shrink.any():
+                break
+            room = w[can_shrink] - lo[can_shrink]
+            total_room = room.sum()
+            if total_room > 0:
+                remove = np.minimum(room, -residual * room / total_room)
+                w[can_shrink] -= remove
+
+        # Pin assets that hit a bound this iteration
+        newly_pinned = (np.abs(w - lo) < 1e-12) | (np.abs(w - hi) < 1e-12)
+        pinned = pinned | newly_pinned
+
+    return w
+
+
 # ── Individual optimization methods ──────────────────────────────────
 
 def min_variance_portfolio(
     mean_returns: np.ndarray,
     cov_matrix: np.ndarray,
     rf: float = DEFAULT_RISK_FREE_RATE,
+    bounds: list[tuple[float, float]] | None = None,
 ) -> np.ndarray:
     """Minimize portfolio variance (SLSQP)."""
     n = len(mean_returns)
     constraints = [{"type": "eq", "fun": lambda w: np.sum(w) - 1.0}]
-    bounds = [(0.0, 1.0)] * n
+    if bounds is None:
+        bounds = [(0.0, 1.0)] * n
     x0 = np.ones(n) / n
 
     result = minimize(
@@ -38,6 +100,7 @@ def risk_parity_portfolio(
     mean_returns: np.ndarray,
     cov_matrix: np.ndarray,
     rf: float = DEFAULT_RISK_FREE_RATE,
+    bounds: list[tuple[float, float]] | None = None,
 ) -> np.ndarray:
     """Equal risk contribution portfolio (Spinu 2013 formulation)."""
     n = len(mean_returns)
@@ -52,7 +115,8 @@ def risk_parity_portfolio(
         return np.sum((risk_contrib - target) ** 2)
 
     constraints = [{"type": "eq", "fun": lambda w: np.sum(w) - 1.0}]
-    bounds = [(cfg.MIN_WEIGHT_BOUND, 1.0)] * n
+    if bounds is None:
+        bounds = [(cfg.MIN_WEIGHT_BOUND, 1.0)] * n
     x0 = np.ones(n) / n
 
     result = minimize(
@@ -70,6 +134,7 @@ def max_diversification_portfolio(
     mean_returns: np.ndarray,
     cov_matrix: np.ndarray,
     rf: float = DEFAULT_RISK_FREE_RATE,
+    bounds: list[tuple[float, float]] | None = None,
 ) -> np.ndarray:
     """Maximize the diversification ratio: sum(w_i * sigma_i) / sigma_p."""
     n = len(mean_returns)
@@ -83,7 +148,8 @@ def max_diversification_portfolio(
         return -(weighted_vols / port_vol)
 
     constraints = [{"type": "eq", "fun": lambda w: np.sum(w) - 1.0}]
-    bounds = [(0.0, 1.0)] * n
+    if bounds is None:
+        bounds = [(0.0, 1.0)] * n
     x0 = np.ones(n) / n
 
     result = minimize(
@@ -101,6 +167,7 @@ def hrp_portfolio(
     mean_returns: np.ndarray,
     cov_matrix: np.ndarray,
     rf: float = DEFAULT_RISK_FREE_RATE,
+    bounds: list[tuple[float, float]] | None = None,
 ) -> np.ndarray:
     """Hierarchical Risk Parity (Lopez de Prado).
 
@@ -163,7 +230,9 @@ def hrp_portfolio(
     total = weights.sum()
     if total > 0:
         weights /= total
-    return weights
+
+    # Apply per-asset bounds via iterative projection (HRP is analytical)
+    return _clip_to_bounds(weights, bounds)
 
 
 def min_cvar_portfolio(
@@ -172,6 +241,7 @@ def min_cvar_portfolio(
     rf: float = DEFAULT_RISK_FREE_RATE,
     confidence: float = cfg.CVAR_CONFIDENCE,
     n_scenarios: int = cfg.CVAR_NUM_SCENARIOS,
+    bounds: list[tuple[float, float]] | None = None,
 ) -> np.ndarray:
     """Minimize Conditional Value-at-Risk using parametric scenarios."""
     n = len(mean_returns)
@@ -190,7 +260,8 @@ def min_cvar_portfolio(
         return cvar
 
     constraints = [{"type": "eq", "fun": lambda w: np.sum(w) - 1.0}]
-    bounds = [(0.0, 1.0)] * n
+    if bounds is None:
+        bounds = [(0.0, 1.0)] * n
     x0 = np.ones(n) / n
 
     result = minimize(
@@ -208,10 +279,12 @@ def equal_weight_portfolio(
     mean_returns: np.ndarray,
     cov_matrix: np.ndarray,
     rf: float = DEFAULT_RISK_FREE_RATE,
+    bounds: list[tuple[float, float]] | None = None,
 ) -> np.ndarray:
     """Baseline 1/N equal-weight portfolio."""
     n = len(mean_returns)
-    return np.ones(n) / n
+    w = np.ones(n) / n
+    return _clip_to_bounds(w, bounds)
 
 
 # ── Method registry ──────────────────────────────────────────────────
@@ -262,9 +335,11 @@ def run_all_methods(
     cov_matrix: np.ndarray,
     rf: float = DEFAULT_RISK_FREE_RATE,
     var_conf: float = DEFAULT_VAR_CONFIDENCE,
+    bounds: list[tuple[float, float]] | None = None,
 ) -> dict:
     """Execute all 7 optimization methods and return weights + metrics.
 
+    *bounds*: optional per-asset ``[(lo, hi), ...]`` forwarded to each method.
     Returns dict keyed by method name, each with 'weights' and 'metrics'.
     """
     from engine.optimizer import optimize_max_sharpe
@@ -274,9 +349,13 @@ def run_all_methods(
     for key, method_info in OPTIMIZATION_METHODS.items():
         try:
             if key == "max_sharpe":
-                weights = optimize_max_sharpe(mean_returns, cov_matrix, rf)
+                weights = optimize_max_sharpe(
+                    mean_returns, cov_matrix, rf, bounds=bounds,
+                )
             else:
-                weights = method_info["funcion"](mean_returns, cov_matrix, rf)
+                weights = method_info["funcion"](
+                    mean_returns, cov_matrix, rf, bounds=bounds,
+                )
 
             # Ensure valid weights
             weights = np.clip(weights, 0, 1)
@@ -317,6 +396,7 @@ def ensemble_vote(
     cov_matrix: np.ndarray,
     rf: float = DEFAULT_RISK_FREE_RATE,
     var_conf: float = DEFAULT_VAR_CONFIDENCE,
+    bounds: list[tuple[float, float]] | None = None,
 ) -> dict:
     """Combine method results via simple average and Sharpe-weighted average.
 
@@ -339,6 +419,7 @@ def ensemble_vote(
     # Simple average
     avg_simple = weights_matrix.mean(axis=0)
     avg_simple = avg_simple / avg_simple.sum()
+    avg_simple = _clip_to_bounds(avg_simple, bounds)
     metrics_simple = calc_portfolio_metrics(
         avg_simple, mean_returns, cov_matrix, rf, var_conf
     )
@@ -355,6 +436,7 @@ def ensemble_vote(
         avg_sharpe = avg_simple.copy()
 
     avg_sharpe = avg_sharpe / avg_sharpe.sum()
+    avg_sharpe = _clip_to_bounds(avg_sharpe, bounds)
     metrics_sharpe = calc_portfolio_metrics(
         avg_sharpe, mean_returns, cov_matrix, rf, var_conf
     )
@@ -381,6 +463,7 @@ def ensemble_shrinkage(
     var_conf: float = DEFAULT_VAR_CONFIDENCE,
     delta_min: float = 0.3,
     delta_max: float = 0.7,
+    bounds: list[tuple[float, float]] | None = None,
 ) -> dict:
     """Combine Sharpe-weighted ensemble with 1/N using adaptive shrinkage.
 
@@ -459,6 +542,9 @@ def ensemble_shrinkage(
     wf_sum = w_final.sum()
     if wf_sum > 0:
         w_final = w_final / wf_sum
+
+    # Enforce per-asset bounds when user constraints are active
+    w_final = _clip_to_bounds(w_final, bounds)
 
     metrics = calc_portfolio_metrics(w_final, mean_returns, cov_matrix, rf, var_conf)
 

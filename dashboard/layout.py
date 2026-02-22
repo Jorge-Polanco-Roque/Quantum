@@ -4,13 +4,13 @@ from dash import html, dcc
 import dash_bootstrap_components as dbc
 
 from config import TICKERS
-from dashboard.components.parameters import create_parameters_panel
+from dashboard.components.parameters import create_parameters_content
 from dashboard.components.metrics_cards import create_metrics_cards
 from dashboard.components.sliders import create_sliders_panel
 from dashboard.components.frontier_chart import create_frontier_figure
 from dashboard.components.weights_chart import create_weights_figure
 from dashboard.components.agent_panel import create_agent_panel
-from dashboard.components.nl_input import create_nl_input_panel
+from dashboard.components.nl_input import create_nl_input_content
 from dashboard.components.correlation_chart import create_correlation_figure
 from dashboard.components.risk_decomposition import create_risk_decomposition_figure
 from dashboard.components.ensemble_table import create_ensemble_table
@@ -65,9 +65,31 @@ def _dashboard_content():
                 children=[
                     dbc.Row(
                         [
-                            dbc.Col(create_nl_input_panel(), xs=12, md=4, className="d-flex"),
-                            dbc.Col(create_parameters_panel(), xs=12, md=3, className="d-flex"),
-                            dbc.Col(create_metrics_cards(), xs=12, md=5, className="d-flex"),
+                            # Combined card: NL Builder + Parameters
+                            dbc.Col(
+                                html.Div(
+                                    className="card controls-combined",
+                                    children=[
+                                        dbc.Row(
+                                            [
+                                                dbc.Col(
+                                                    create_nl_input_content(),
+                                                    xs=12, md=5,
+                                                    className="controls-left",
+                                                ),
+                                                dbc.Col(
+                                                    create_parameters_content(),
+                                                    xs=12, md=7,
+                                                    className="controls-right",
+                                                ),
+                                            ],
+                                            className="g-0 h-100",
+                                        ),
+                                    ],
+                                ),
+                                xs=12, md=8, className="d-flex",
+                            ),
+                            dbc.Col(create_metrics_cards(), xs=12, md=4, className="d-flex"),
                         ],
                         className="g-2",
                     ),

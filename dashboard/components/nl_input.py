@@ -3,10 +3,10 @@
 from dash import html, dcc
 
 
-def create_nl_input_panel():
-    """Return the NL input panel with textarea and build button."""
+def create_nl_input_content():
+    """Return the NL input content (no card wrapper — used inside combined card)."""
     return html.Div(
-        className="card nl-input-panel",
+        className="nl-input-panel",
         children=[
             html.Div("CONSTRUCTOR DE PORTAFOLIOS AI", className="section-title"),
             dcc.Textarea(
@@ -16,11 +16,7 @@ def create_nl_input_panel():
                     "Describe tu portafolio ideal...\n"
                     'Ej: "Construye un portafolio tech-heavy con algo de energia"'
                 ),
-                style={
-                    "width": "100%",
-                    "height": "80px",
-                    "resize": "vertical",
-                },
+                style={"width": "100%"},
             ),
             dcc.Loading(
                 type="dot",
@@ -35,3 +31,10 @@ def create_nl_input_panel():
             ),
         ],
     )
+
+
+def create_nl_input_panel():
+    """Return the NL input panel (standalone card — backwards compatible)."""
+    panel = create_nl_input_content()
+    panel.className = "card nl-input-panel"
+    return panel

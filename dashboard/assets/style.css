@@ -62,6 +62,10 @@ body {
     max-width: 100%;
 }
 
+.dash-section > .row {
+    align-items: stretch;
+}
+
 /* ── Card Base ────────────────────────────────────────────────────── */
 .card {
     background-color: #161b22;
@@ -72,13 +76,31 @@ body {
     height: 100%;
     display: flex;
     flex-direction: column;
-    justify-content: space-between;
+    gap: 8px;
 }
 
 /* ── Controls row — equal height columns ──────────────────────────── */
+.dash-section > .row > .col.d-flex {
+    display: flex;
+    flex-direction: column;
+}
+
+.dash-section > .row > .col.d-flex > .card {
+    flex: 1 1 0%;
+}
+
 .dash-section > .row > .col.d-flex > .row {
+    flex: 1 1 0%;
     width: 100%;
     align-items: stretch;
+}
+
+.dash-section > .row > .col.d-flex > .row > .col {
+    display: flex;
+}
+
+.dash-section > .row > .col.d-flex > .row > .col > .metric-card {
+    flex: 1 1 0%;
 }
 
 /* ── Metric Cards ─────────────────────────────────────────────────── */
@@ -571,9 +593,53 @@ body {
     background-color: #484f58;
 }
 
+/* ── Combined Controls Card (NL + Parameters) ───────────────────── */
+.controls-combined {
+    padding: 0 !important;
+    overflow: hidden;
+}
+
+.controls-combined > .row {
+    margin: 0;
+    flex: 1;
+}
+
+.controls-left {
+    display: flex;
+    padding: 14px;
+    border-right: 1px solid #30363d;
+}
+
+.controls-right {
+    display: flex;
+    padding: 14px;
+}
+
 /* ── NL Input Panel ──────────────────────────────────────────────── */
 .nl-input-panel {
-    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+    flex: 1;
+}
+
+.nl-input-panel .btn-build {
+    flex-shrink: 0;
+    margin-top: auto;
+}
+
+/* ── Parameters Content ──────────────────────────────────────────── */
+.params-content {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+    flex: 1;
+}
+
+.params-content > .row:last-child {
+    margin-top: auto;
 }
 
 .nl-textarea {
@@ -585,7 +651,7 @@ body {
     font-size: 0.6rem !important;
     padding: 8px 10px !important;
     width: 100% !important;
-    flex: 1 1 auto;
+    flex: 1 1 0%;
     resize: vertical;
     min-height: 50px;
     transition: border-color 0.2s ease;

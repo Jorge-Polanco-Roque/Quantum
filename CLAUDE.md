@@ -29,7 +29,8 @@ quantum/
 │   ├── optimizer.py                # optimize_max_sharpe (SLSQP), compute_efficient_frontier, CML
 │   ├── risk.py                     # calc_portfolio_metrics, normalize_weights, calc_risk_contribution
 │   ├── ensemble.py                 # 7 optimization methods + ensemble voting + shrinkage
-│   │                               #   run_all_methods, ensemble_vote, ensemble_shrinkage
+│   │                               #   _clip_to_bounds, run_all_methods, ensemble_vote, ensemble_shrinkage
+│   │                               #   All methods accept optional bounds=[(lo,hi),...] for constraints
 │   └── sentiment.py                # News via yfinance .news + keyword scoring (fetch_all_news)
 │                                   #   Handles yfinance >= 1.x nested content format
 ├── agents/                         # Multi-agent system (LangGraph, TradingAgents pattern)
@@ -59,6 +60,9 @@ quantum/
 │   ├── layout.py                   # Adaptive layout: dashboard (3/4) + chat sidebar (1/4)
 │   │                               #   Chat dynamically repositionable: right/left/top/bottom
 │   │                               #   IDs: app-layout, dashboard-main (for inline style switching)
+│   │                               #   Section 1: Combined card (.controls-combined) merges
+│   │                               #     NL input (md=5) + Parameters (md=7) in single card,
+│   │                               #     outer split md=8 combined / md=4 metrics
 │   │                               #   Dashboard has 7 rows: header, NL+params+metrics,
 │   │                               #   sliders+charts, corr+risk_decomp+ensemble,
 │   │                               #   drawdown+performance, sentiment, agents.
@@ -71,10 +75,13 @@ quantum/
 │   │                               #   chat-init, chat-send
 │   │                               #   Helpers: _compute_position_styles(pos) → 3 style dicts
 │   │                               #   _compute_split_weights(tickers, split_data) → deterministic split
-│   │                               #   _apply_weight_floor(weight_map, min_floor) → floor redistribution
+│   │                               #   _build_bounds_from_constraints(tickers, constraints) → SLSQP bounds
+│   │                               #   _apply_weight_floor(weight_map, min_floor, constraints) → floor+constraints
 │   │                               #   _build_sentiment_output() → shared by manual + auto sentiment
 │   ├── components/
 │   │   ├── parameters.py           # Tasa Libre%, Simulaciones, VaR Nivel% inputs
+│   │   │                           #   create_parameters_content() (no card wrapper, for combined card)
+│   │   │                           #   create_parameters_panel() (standalone card wrapper)
 │   │   ├── metrics_cards.py        # 4 KPI cards (Sharpe, Return, Vol, VaR)
 │   │   ├── sliders.py              # Dynamic sliders with pattern-matching IDs + lock toggles
 │   │   │                           #   Ticker labels show company name on hover (title attr)
@@ -88,6 +95,8 @@ quantum/
 │   │   ├── sentiment_panel.py      # News button + per-ticker sentiment + fundamental analysis
 │   │   ├── agent_panel.py          # AI analysis output panel (auto-triggered + manual re-run)
 │   │   ├── nl_input.py             # Natural language portfolio input panel
+│   │   │                           #   create_nl_input_content() (no card wrapper, for combined card)
+│   │   │                           #   create_nl_input_panel() (standalone card wrapper)
 │   │   └── chat_widget.py          # Chat sidebar panel (1/4, dynamic position toggles)
 │   │                               #   id=chat-sidebar, 4 toggle buttons (◀▲▼▶)
 │   │                               #   store-chat-position (right|left|top|bottom)
@@ -116,13 +125,13 @@ quantum/
 2. **Slider changes** → `risk.py` recalculates metrics in real-time → updates metric cards
 3. **Sentimiento + Fundamental (auto-triggered + manual)** → fires automatically when `store-optimal-weights` changes (also available via ACTUALIZAR NOTICIAS button) → `engine/sentiment.py` fetches yfinance news → keyword scoring → **`agents/fundamental_analyst.py`** combines quant metrics + news into a ponderacion cuantitativo-fundamental → renders per-ticker sentiment + AI fundamental analysis
 4. **Analisis AI (auto-triggered)** → fires automatically when `store-optimal-weights` changes (from EJECUTAR or NL Builder) → `agents/graph.py` runs LangGraph workflow with ensemble + sentiment data: Quant Analyst → Risk Analyst ↔ Market Analyst (debate) → Portfolio Advisor → displays recommendation. Also available as manual re-run via button.
-5. **CONSTRUIR PORTAFOLIO** → `agents/portfolio_builder.py` runs ReAct agent with BUILDER_TOOLS (3): interprets NL prompt → selects tickers → validates → returns `{tickers, method, reasoning}` (NO weights, except `"preset"`). Callback computes weights deterministicaly: `method="preset"` → user-specified percentages passed through, `"ensemble"` → ensemble shrinkage (default), `"optimize"` → SLSQP, `"equal_weight"` → 1/N, `"risk_parity"` → engine risk parity, `"min_variance"` → engine min variance, `"split"` → `_compute_split_weights()`. Then `_run_full_pipeline(preset_weights=weight_map, method=method)` → `_apply_weight_floor()` ensures min 2% per ticker → updates `store-tickers` + runs full pipeline (MC + ensemble + all charts) → **auto-triggers AI Analysis** (see #4) + **auto-triggers Sentiment** (see #3). Same prompt always produces identical weights.
+5. **CONSTRUIR PORTAFOLIO** → `agents/portfolio_builder.py` runs ReAct agent with BUILDER_TOOLS (3): interprets NL prompt → selects tickers → validates → returns `{tickers, method, reasoning}` (NO weights, except `"preset"`). Optionally returns `"constraints"` with per-ticker min/max bounds (e.g. `{"NVDA": {"min": 0.10}, "_all": {"max": 0.25}}`). Callback computes weights deterministicaly: `method="preset"` → user-specified percentages passed through, `"ensemble"` → ensemble shrinkage (default), `"optimize"` → SLSQP, `"equal_weight"` → 1/N, `"risk_parity"` → engine risk parity, `"min_variance"` → engine min variance, `"split"` → `_compute_split_weights()`. Constraints are converted to SLSQP bounds via `_build_bounds_from_constraints()` and passed to all optimizers + ensemble. Then `_run_full_pipeline(preset_weights=weight_map, method=method, constraints=constraints)` → `_apply_weight_floor(constraints=constraints)` ensures min 2% per ticker AND respects user constraints → updates `store-tickers` + runs full pipeline (MC + ensemble + all charts) → **auto-triggers AI Analysis** (see #4) + **auto-triggers Sentiment** (see #3). Same prompt always produces identical weights.
 6. **Chatbot** → always-visible sidebar (1/4, repositionable via toggle buttons) → user types question → callback reads all portfolio stores → builds context dict → `agents/chatbot.py` ChatbotAgent.chat() with InMemorySaver for multi-turn memory → returns markdown response rendered in chat bubble.
 7. **Chat position toggle** → click ◀▲▼▶ buttons → `switch_chat_position` callback updates inline styles on `#app-layout`, `#dashboard-main`, `#chat-sidebar` via `_compute_position_styles(pos)` → CSS `flex-direction` + `order` switch without DOM rebuild → chat history and all stores preserved.
 
 ## Ensemble Optimization (engine/ensemble.py)
 
-7 methods with unified signature `(mean_returns, cov_matrix, rf) -> np.ndarray`:
+7 methods with unified signature `(mean_returns, cov_matrix, rf, bounds=None) -> np.ndarray`:
 - **Max Sharpe** — maximizes Sharpe ratio (existing SLSQP)
 - **Min. Varianza** — minimizes portfolio variance
 - **Paridad de Riesgo** — equalizes risk contribution per asset (Spinu 2013)
@@ -152,13 +161,21 @@ Uses `langgraph.prebuilt.create_react_agent` with `BUILDER_TOOLS` (3 tools) from
 - `fetch_and_analyze` — fetches data + returns summary stats (return, vol, correlation)
 
 The LLM has NO access to optimization tools — it only selects tickers and chooses a method.
-Returns `{tickers, method, reasoning}` (and `split` when method="split"). Weight computation
-happens deterministically in the dashboard callback via `_compute_split_weights()`, engine
-optimizers (`risk_parity_portfolio`, `min_variance_portfolio`, `optimize_max_sharpe`), or
-equal weight. `_apply_weight_floor()` ensures every ticker gets >= 2%.
+Returns `{tickers, method, reasoning}` (and `split` when method="split", `constraints` when
+user specifies min/max per ticker). Weight computation happens deterministically in the
+dashboard callback via `_compute_split_weights()`, engine optimizers (`risk_parity_portfolio`,
+`min_variance_portfolio`, `optimize_max_sharpe`), or equal weight. User constraints are
+converted to SLSQP bounds via `_build_bounds_from_constraints()` and forwarded to all
+optimizers + ensemble methods. `_apply_weight_floor(constraints=constraints)` ensures every
+ticker gets >= 2% AND respects user min/max constraints. The `"_all"` key applies global
+bounds to all tickers; individual ticker constraints override `"_all"`.
 
 Methods: `"preset"` (user-specified exact percentages per ticker), `"ensemble"` (ensemble shrinkage with adaptive delta, default),
 `"optimize"` (SLSQP Max Sharpe), `"equal_weight"` (1/N), `"risk_parity"`, `"min_variance"`, `"split"` (with groups specification).
+
+Constraints: Any method can include `"constraints"` with per-ticker bounds: `{"AAPL": {"min": 0.05, "max": 0.30}, "_all": {"max": 0.25}}`.
+The system distinguishes between preset (exact weights) and constraints (bounds for optimization).
+Constraints are enforced at both the optimizer level (SLSQP bounds) and post-processing (`_apply_weight_floor`).
 
 ### Chatbot Interactivo (agents/chatbot.py)
 Conversational agent using `create_react_agent` + `InMemorySaver` for multi-turn memory. Receives full portfolio context (tickers, weights, metrics, ensemble with full per-ticker weights and metrics per method, sentiment) injected as `[CONTEXTO DEL PORTAFOLIO]` block on each message. System prompt in Spanish. No tools (v1 — pure conversational with context). Thread ID (UUID) generated per page load.
@@ -233,7 +250,7 @@ Ticker labels show the full company name on hover via HTML `title` attribute. Th
 
 Markdown rendered inside `.agent-panel`, `#sentiment-output`, and `.chat-bubble-assistant` has scoped heading sizes (h1: 0.85rem, h2: 0.8rem, h3: 0.75rem) to keep content compact within dark-mode panels. The agent panel h1 gets an accent-colored bottom border as a visual separator.
 
-**Controls row**: Section 1 (NL + params + metrics) uses `d-flex` columns with `.card { height: 100%; display: flex; flex-direction: column }` and `.metric-card { height: 100%; overflow: hidden }` for equal-height alignment. Metric cards use `min-width: 0` and `overflow: hidden` to prevent text overflow in narrow columns.
+**Controls row**: Section 1 uses a combined card (`.controls-combined`) that merges NL Builder (left, `md=5`) and Parameters (right, `md=7`) into a single card with a vertical divider (`.controls-left` border-right). Outer split: `md=8` combined card / `md=4` metric cards. Cards use `gap: 8px` instead of `justify-content: space-between`. `.dash-section > .row { align-items: stretch }` ensures equal-height columns. `.metric-card { height: 100%; overflow: hidden }` with `min-width: 0` prevents text overflow. Buttons use `margin-top: auto` for bottom-alignment within flex columns.
 
 **Layout model**: `.app-layout` uses `width: 100vw; height: 100vh; display: flex` (no `position: fixed` to avoid Dash wrapper conflicts). Dash wrappers (`#react-entry-point`, `#_dash-app-content`) are explicitly set to `width: 100%; height: 100%`. Dashboard uses `flex: 1 1 0% !important; min-width: 0 !important` — the `!important` flags prevent Bootstrap DARKLY theme overrides. Chat sidebar uses `flex: 0 0 300px !important; width: 300px !important; max-width: 300px` — rigid 300px that never grows or shrinks. `_compute_position_styles(pos)` in callbacks.py returns inline style dicts: left/right only set `order` + borders (never `flex` or `width`); top/bottom override sidebar to `width: 100%; flex: 0 0 25vh`. Position toggle buttons (`.chat-pos-btn`, `.chat-pos-btn-active`) are 22x22px compact buttons with accent highlight on active state. Responsive: `@media (max-width: 1200px)` stacks vertically with `!important` overrides.
 

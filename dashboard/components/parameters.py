@@ -4,10 +4,10 @@ from dash import html, dcc
 import dash_bootstrap_components as dbc
 
 
-def create_parameters_panel():
-    """Return the parameter inputs + action buttons panel."""
+def create_parameters_content():
+    """Return parameter inputs + buttons (no card wrapper — for combined card)."""
     return html.Div(
-        className="card",
+        className="params-content",
         children=[
             html.Div(
                 className="section-title",
@@ -64,7 +64,7 @@ def create_parameters_panel():
                         width=4,
                     ),
                 ],
-                className="mb-3",
+                className="g-2",
             ),
             dbc.Row(
                 [
@@ -87,6 +87,14 @@ def create_parameters_panel():
                         width=6,
                     ),
                 ],
+                className="g-2",
             ),
         ],
     )
+
+
+def create_parameters_panel():
+    """Return the parameter inputs + action buttons panel (standalone card)."""
+    panel = create_parameters_content()
+    panel.className = "card params-content"
+    return panel

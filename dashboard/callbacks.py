@@ -104,27 +104,72 @@ def _compute_split_weights(tickers, split_data):
     return weight_map
 
 
-def _apply_weight_floor(weight_map, min_floor=0.02):
-    """Ensure every ticker has at least *min_floor* weight.
+def _build_bounds_from_constraints(tickers, constraints):
+    """Convert a constraints dict to an SLSQP-compatible bounds list.
 
+    *constraints* may contain per-ticker entries and a special ``"_all"``
+    key that applies to every ticker (individual entries take priority).
+
+    Returns ``[(lo, hi), ...]`` for each ticker, or ``None`` when
+    *constraints* is empty/``None``.
+    """
+    if not constraints:
+        return None
+
+    global_c = constraints.get("_all", {})
+    bounds = []
+    for t in tickers:
+        c = constraints.get(t, {})
+        lo = c.get("min", global_c.get("min", 0.0))
+        hi = c.get("max", global_c.get("max", 1.0))
+        bounds.append((max(float(lo), 0.0), min(float(hi), 1.0)))
+    return bounds
+
+
+def _apply_weight_floor(weight_map, min_floor=0.02, constraints=None):
+    """Ensure every ticker respects its floor and user constraints.
+
+    When *constraints* is provided, each ticker's effective floor is
+    ``max(min_floor, constraint_min)`` and ceiling is ``constraint_max``.
     Reduces heavier positions proportionally to fund the floor.
     Returns a new dict; always sums to 1.0.  Fully deterministic.
     """
-    zeros = [t for t, w in weight_map.items() if w < min_floor]
-    if not zeros or len(zeros) >= len(weight_map):
-        return weight_map
+    if not constraints:
+        constraints = {}
+    global_c = constraints.get("_all", {})
 
-    deficit = sum(max(min_floor - weight_map[t], 0) for t in zeros)
-    non_zeros = {t: w for t, w in weight_map.items() if w >= min_floor}
-    nz_sum = sum(non_zeros.values())
-    scale = (nz_sum - deficit) / nz_sum if nz_sum > 0 else 1.0
-
-    result = {}
+    # Build per-ticker effective floor and ceiling
+    floors = {}
+    caps = {}
     for t in weight_map:
-        if t in non_zeros:
-            result[t] = non_zeros[t] * scale
-        else:
-            result[t] = min_floor
+        c = constraints.get(t, {})
+        lo = c.get("min", global_c.get("min", 0.0))
+        hi = c.get("max", global_c.get("max", 1.0))
+        floors[t] = max(min_floor, float(lo))
+        caps[t] = min(1.0, float(hi))
+
+    # Iterative projection: floor → cap → normalize (converges quickly)
+    result = dict(weight_map)
+    for _ in range(50):
+        # Apply floors
+        for t in result:
+            if result[t] < floors[t]:
+                result[t] = floors[t]
+        # Apply caps
+        for t in result:
+            if result[t] > caps[t]:
+                result[t] = caps[t]
+        # Normalize
+        r_sum = sum(result.values())
+        if r_sum > 0:
+            result = {t: w / r_sum for t, w in result.items()}
+        # Check convergence
+        ok = all(
+            result[t] >= floors[t] - 1e-10 and result[t] <= caps[t] + 1e-10
+            for t in result
+        )
+        if ok and abs(sum(result.values()) - 1.0) < 1e-10:
+            break
 
     # Final normalization for floating-point safety
     r_sum = sum(result.values())
@@ -134,7 +179,7 @@ def _apply_weight_floor(weight_map, min_floor=0.02):
 
 
 def _run_full_pipeline(tickers, rf, num_sims, var_conf, preset_weights=None,
-                       method="optimize"):
+                       method="optimize", constraints=None):
     """Run the full MC + optimization + ensemble pipeline.
 
     *preset_weights*: ``{ticker: weight}`` dict — when provided the pipeline
@@ -143,6 +188,9 @@ def _run_full_pipeline(tickers, rf, num_sims, var_conf, preset_weights=None,
     *method*: optimization method name.  When ``preset_weights`` is ``None``
     and method is ``"risk_parity"`` or ``"min_variance"``, the corresponding
     ensemble method weights are used instead of SLSQP Max Sharpe.
+
+    *constraints*: optional ``{ticker: {"min": lo, "max": hi}, ...}`` dict.
+    Converted to per-asset bounds and forwarded to all optimizers.
 
     Returns a tuple with all outputs needed by CB1 and CB8.
     """
@@ -155,11 +203,14 @@ def _run_full_pipeline(tickers, rf, num_sims, var_conf, preset_weights=None,
     mean_ret, cov_mat = get_annual_stats(returns)
     n = len(available_tickers)
 
+    # Build per-asset bounds from user constraints (None if no constraints)
+    bounds = _build_bounds_from_constraints(available_tickers, constraints)
+
     # Monte Carlo simulation
     mc = run_monte_carlo(mean_ret, cov_mat, num_sims=num_sims, risk_free_rate=rf)
 
     # Run all 7 methods ONCE (reused for ensemble vote and ensemble shrinkage)
-    all_methods = run_all_methods(mean_ret, cov_mat, rf, var_conf)
+    all_methods = run_all_methods(mean_ret, cov_mat, rf, var_conf, bounds=bounds)
 
     # Optimal weights — determined by preset_weights or method
     if preset_weights is not None:
@@ -168,24 +219,30 @@ def _run_full_pipeline(tickers, rf, num_sims, var_conf, preset_weights=None,
         if w_sum > 0:
             opt_weights = raw / w_sum
         else:
-            opt_weights = optimize_max_sharpe(mean_ret, cov_mat, risk_free_rate=rf)
+            opt_weights = optimize_max_sharpe(
+                mean_ret, cov_mat, risk_free_rate=rf, bounds=bounds,
+            )
     elif method == "ensemble":
         shrink = ensemble_shrinkage(
             all_methods, mean_ret, cov_mat, rf, var_conf,
             delta_min=cfg.ENSEMBLE_DELTA_MIN,
             delta_max=cfg.ENSEMBLE_DELTA_MAX,
+            bounds=bounds,
         )
         opt_weights = np.array(shrink["shrinkage_ensemble"]["weights"])
     elif method == "risk_parity":
-        opt_weights = risk_parity_portfolio(mean_ret, cov_mat, rf)
+        opt_weights = risk_parity_portfolio(mean_ret, cov_mat, rf, bounds=bounds)
     elif method == "min_variance":
-        opt_weights = min_variance_portfolio(mean_ret, cov_mat, rf)
+        opt_weights = min_variance_portfolio(mean_ret, cov_mat, rf, bounds=bounds)
     else:
-        opt_weights = optimize_max_sharpe(mean_ret, cov_mat, risk_free_rate=rf)
+        opt_weights = optimize_max_sharpe(
+            mean_ret, cov_mat, risk_free_rate=rf, bounds=bounds,
+        )
 
-    # Apply weight floor — ensure every ticker gets >= 2%
+    # Apply weight floor — ensure every ticker gets >= 2% AND respects constraints
     floor_map = _apply_weight_floor(
-        {t: float(w) for t, w in zip(available_tickers, opt_weights)}
+        {t: float(w) for t, w in zip(available_tickers, opt_weights)},
+        constraints=constraints,
     )
     opt_weights = np.array([floor_map[t] for t in available_tickers])
     opt_metrics = calc_portfolio_metrics(opt_weights, mean_ret, cov_mat, rf, var_conf)
@@ -204,12 +261,15 @@ def _run_full_pipeline(tickers, rf, num_sims, var_conf, preset_weights=None,
     )
 
     # Ensemble vote (reuses all_methods already computed above)
-    ensemble_results = ensemble_vote(all_methods, mean_ret, cov_mat, rf, var_conf)
+    ensemble_results = ensemble_vote(
+        all_methods, mean_ret, cov_mat, rf, var_conf, bounds=bounds,
+    )
     # Add shrinkage ensemble to the table
     shrink_result = ensemble_shrinkage(
         all_methods, mean_ret, cov_mat, rf, var_conf,
         delta_min=cfg.ENSEMBLE_DELTA_MIN,
         delta_max=cfg.ENSEMBLE_DELTA_MAX,
+        bounds=bounds,
     )
     combined_ensemble = {**all_methods, **ensemble_results, **shrink_result}
 
@@ -785,6 +845,7 @@ def register_callbacks(app):
         new_tickers = result.get("tickers", [])
         method = result.get("method", "ensemble")
         split_data = result.get("split", None)
+        constraints = result.get("constraints", None)
         reasoning = result.get("reasoning", "Portafolio construido exitosamente.")
 
         # Compute weights deterministically based on method
@@ -818,6 +879,7 @@ def register_callbacks(app):
             pipeline_result = _run_full_pipeline(
                 new_tickers, rf, num_sims, var_conf,
                 preset_weights=weight_map, method=method,
+                constraints=constraints,
             )
         except Exception as exc:
             return [no_update] * 2 + [
@@ -852,6 +914,33 @@ def register_callbacks(app):
                 style={"color": "#58a6ff", "fontSize": "0.7rem", "marginTop": "2px"},
             ),
         ]
+
+        if constraints:
+            parts = []
+            for tk, c in constraints.items():
+                if tk == "_all":
+                    lo = c.get("min")
+                    hi = c.get("max")
+                    if lo is not None:
+                        parts.append(f"todos min {lo*100:.0f}%")
+                    if hi is not None:
+                        parts.append(f"todos max {hi*100:.0f}%")
+                else:
+                    lo = c.get("min")
+                    hi = c.get("max")
+                    if lo is not None and hi is not None:
+                        parts.append(f"{tk} [{lo*100:.0f}%-{hi*100:.0f}%]")
+                    elif lo is not None:
+                        parts.append(f"{tk} min {lo*100:.0f}%")
+                    elif hi is not None:
+                        parts.append(f"{tk} max {hi*100:.0f}%")
+            if parts:
+                msg_children.append(
+                    html.Div(
+                        f"Restricciones: {', '.join(parts)}",
+                        style={"color": "#d2a8ff", "fontSize": "0.7rem", "marginTop": "2px"},
+                    )
+                )
 
         if filtered_out:
             msg_children.append(

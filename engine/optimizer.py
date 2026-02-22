@@ -10,8 +10,13 @@ def optimize_max_sharpe(
     mean_returns: np.ndarray,
     cov_matrix: np.ndarray,
     risk_free_rate: float = 0.04,
+    bounds: list[tuple[float, float]] | None = None,
 ) -> np.ndarray:
-    """Find the portfolio weights that maximize the Sharpe ratio (SLSQP)."""
+    """Find the portfolio weights that maximize the Sharpe ratio (SLSQP).
+
+    *bounds*: optional per-asset ``[(lo, hi), ...]``.  When ``None``,
+    each weight is bounded to ``[0, 1]``.
+    """
     n = len(mean_returns)
 
     def neg_sharpe(w: np.ndarray) -> float:
@@ -20,7 +25,8 @@ def optimize_max_sharpe(
         return -(port_ret - risk_free_rate) / port_vol
 
     constraints = [{"type": "eq", "fun": lambda w: np.sum(w) - 1.0}]
-    bounds = [(0.0, 1.0)] * n
+    if bounds is None:
+        bounds = [(0.0, 1.0)] * n
     x0 = np.ones(n) / n
 
     result = minimize(
