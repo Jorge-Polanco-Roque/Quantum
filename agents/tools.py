@@ -13,6 +13,40 @@ from engine.monte_carlo import run_monte_carlo, get_optimal_portfolio
 from engine.optimizer import optimize_max_sharpe
 from engine.risk import calc_portfolio_metrics
 
+# ── Alias mapping: common short names → Yahoo Finance tickers ────────
+# Mexican fondos de inversión use series-specific tickers on Yahoo Finance.
+# Users type short names (e.g. "BLKEM1") but yfinance needs the full series.
+TICKER_ALIASES = {
+    # BlackRock Mexico fondos
+    "BLKEM1": "BLKEM1C0-A.MX",
+    "GOLD5+": "GOLD5+B2-C.MX",
+    "BLKGUB1": "BLKGUB1B0-D.MX",
+    "BLKINT": "BLKINTC0-A.MX",
+    "BLKDOL": "BLKDOLB0-D.MX",
+    "BLKLIQ": "BLKLIQB0-D.MX",
+    "BLKRFA": "BLKRFAB0-C.MX",
+    # GBM fondos
+    "GBMCRE": "GBMCREB2-A.MX",
+    "GBMMOD": "GBMMODB2-A.MX",
+    "GBMF2": "GBMF2BO.MX",
+    "GBMINT": "GBMINTB1.MX",
+    # NAFTRAC alias
+    "NAFTRAC": "NAFTRAC.MX",
+}
+
+
+def resolve_ticker_aliases(tickers: list[str]) -> list[str]:
+    """Replace short fund names with their Yahoo Finance equivalents."""
+    resolved = []
+    for t in tickers:
+        clean = t.strip()
+        upper = clean.upper()
+        # Check exact match first, then uppercase
+        alias = TICKER_ALIASES.get(clean) or TICKER_ALIASES.get(upper)
+        resolved.append(alias if alias else clean)
+    return resolved
+
+
 # ── Curated sector/theme → ticker mapping ────────────────────────────
 SECTOR_TICKERS = {
     "technology": ["AAPL", "MSFT", "GOOGL", "META", "NVDA", "CRM", "ADBE", "INTC", "AMD", "ORCL"],
@@ -149,6 +183,52 @@ SECTOR_TICKERS = {
     "etf_europa": ["VGK", "EZU", "HEDJ"],
     "etf_japon": ["EWJ", "DXJ"],
     "etf_global": ["VT", "ACWI", "IXUS", "VEA", "VWO"],
+
+    # ── UCITS ETFs (London Stock Exchange .L) ────────────────────────
+    "ucits": ["VWRL.L", "CSPX.L", "IWDA.L", "VUSA.L", "VUAG.L", "HMWO.L",
+              "ISF.L", "IUSA.L", "SWDA.L", "VWRP.L", "EIMI.L"],
+    "ucits_equity": ["VWRL.L", "CSPX.L", "IWDA.L", "VUSA.L", "VUAG.L", "HMWO.L",
+                     "ISF.L", "IUSA.L", "SWDA.L", "VWRP.L", "EIMI.L"],
+    "ucits_bonos": ["AGBP.L", "IGLT.L", "VGOV.L", "SEMB.L", "IBTM.L"],
+    "ucits_renta_fija": ["AGBP.L", "IGLT.L", "VGOV.L", "SEMB.L", "IBTM.L"],
+    "ucits_dividendos": ["VHYL.L", "VWRL.L", "ISF.L"],
+    "ucits_oro": ["SGLN.L"],
+    "ucits_commodities": ["SGLN.L"],
+
+    # ── SIC Mexico (ETFs extranjeros disponibles en el SIC) ──────────
+    "sic": ["SPY", "QQQ", "IWM", "DIA", "VTI", "VOO", "VT", "ACWI",
+            "VYM", "SCHD", "HDV", "DVY", "DGRO",
+            "BND", "AGG", "TLT", "IEF", "LQD", "HYG",
+            "GLD", "IAU", "SLV",
+            "EWW", "EWZ", "EEM", "VWO", "FXI", "VGK", "EWJ",
+            "VWRL.L", "CSPX.L", "IWDA.L"],
+    "sic_mexico": ["SPY", "QQQ", "IWM", "DIA", "VTI", "VOO", "VT", "ACWI",
+                   "VYM", "SCHD", "HDV", "DVY", "DGRO",
+                   "BND", "AGG", "TLT", "IEF", "LQD", "HYG",
+                   "GLD", "IAU", "SLV",
+                   "EWW", "EWZ", "EEM", "VWO", "FXI", "VGK", "EWJ",
+                   "VWRL.L", "CSPX.L", "IWDA.L"],
+
+    # ── Dividendos global expandido ──────────────────────────────────
+    "etf_dividendos_global": ["VYM", "SCHD", "HDV", "DVY", "DGRO",
+                              "VHYL.L", "IDV", "SDIV", "FGD", "DEM"],
+
+    # ── Fondos de inversion Mexico (series Yahoo Finance) ────────────
+    "fondos_mexico": ["BLKEM1C0-A.MX", "GOLD5+B2-C.MX", "BLKGUB1B0-D.MX",
+                      "BLKINTC0-A.MX", "BLKDOLB0-D.MX", "BLKLIQB0-D.MX",
+                      "BLKRFAB0-C.MX", "GBMCREB2-A.MX", "GBMMODB2-A.MX",
+                      "GBMF2BO.MX", "GBMINTB1.MX"],
+    "fondos_inversion": ["BLKEM1C0-A.MX", "GOLD5+B2-C.MX", "BLKGUB1B0-D.MX",
+                          "BLKINTC0-A.MX", "BLKDOLB0-D.MX", "BLKLIQB0-D.MX",
+                          "BLKRFAB0-C.MX", "GBMCREB2-A.MX", "GBMMODB2-A.MX",
+                          "GBMF2BO.MX", "GBMINTB1.MX"],
+    "fondos_blackrock": ["BLKEM1C0-A.MX", "GOLD5+B2-C.MX", "BLKGUB1B0-D.MX",
+                          "BLKINTC0-A.MX", "BLKDOLB0-D.MX", "BLKLIQB0-D.MX",
+                          "BLKRFAB0-C.MX"],
+    "blackrock_mexico": ["BLKEM1C0-A.MX", "GOLD5+B2-C.MX", "BLKGUB1B0-D.MX",
+                          "BLKINTC0-A.MX", "BLKDOLB0-D.MX", "BLKLIQB0-D.MX",
+                          "BLKRFAB0-C.MX"],
+    "fondos_gbm": ["GBMCREB2-A.MX", "GBMMODB2-A.MX", "GBMF2BO.MX", "GBMINTB1.MX"],
 }
 
 
@@ -156,21 +236,38 @@ SECTOR_TICKERS = {
 def validate_tickers(tickers: list[str]) -> str:
     """Valida que cada simbolo de ticker exista en Yahoo Finance.
 
-    Retorna un objeto JSON con listas de tickers 'valid' e 'invalid'.
+    Resuelve automaticamente aliases de fondos mexicanos (ej: BLKEM1 →
+    BLKEM1C0-A.MX, GOLD5+ → GOLD5+B2-C.MX). Si un nombre corto tiene alias,
+    retorna el ticker de Yahoo Finance en la lista 'valid'.
+
+    Retorna un objeto JSON con:
+    - 'valid': tickers encontrados (con nombre Yahoo Finance resuelto)
+    - 'invalid': tickers no encontrados
+    - 'resolved': mapeo nombre_original → nombre_yahoo (solo si hubo alias)
     Usa esto para verificar tickers antes de descargar datos u optimizar.
     """
     valid, invalid = [], []
+    resolved_map = {}
     for t in tickers:
-        t = t.upper().strip()
+        original = t.strip()
+        upper = original.upper()
+        # Check aliases first
+        alias = TICKER_ALIASES.get(original) or TICKER_ALIASES.get(upper)
+        check = alias if alias else upper
         try:
-            info = yf.Ticker(t).info
+            info = yf.Ticker(check).info
             if info and info.get("regularMarketPrice") is not None:
-                valid.append(t)
+                valid.append(check)
+                if alias:
+                    resolved_map[original] = check
             else:
-                invalid.append(t)
+                invalid.append(original)
         except Exception:
-            invalid.append(t)
-    return json.dumps({"valid": valid, "invalid": invalid})
+            invalid.append(original)
+    result = {"valid": valid, "invalid": invalid}
+    if resolved_map:
+        result["resolved"] = resolved_map
+    return json.dumps(result)
 
 
 @tool
@@ -195,6 +292,14 @@ def search_tickers_by_sector(sector: str) -> str:
     - ETFs commodities: etf_oro, etf_plata, etf_commodities.
     - ETFs pais/region: etf_mexico, naftrac, etf_brasil, etf_china, etf_emergentes,
       etf_europa, etf_japon, etf_global.
+    - UCITS (ETFs europeos LSE .L): ucits, ucits_equity, ucits_bonos, ucits_renta_fija,
+      ucits_dividendos, ucits_oro, ucits_commodities.
+    - SIC Mexico (ETFs extranjeros en el SIC): sic, sic_mexico.
+    - Dividendos global: etf_dividendos_global.
+    - Fondos de inversion Mexico: fondos_mexico, fondos_inversion, fondos_blackrock,
+      blackrock_mexico, fondos_gbm. Incluye fondos BlackRock (BLKEM1, GOLD5+, BLKGUB1,
+      BLKINT, BLKDOL, BLKLIQ, BLKRFA) y GBM (GBMCRE, GBMMOD, GBMF2, GBMINT)
+      con sus tickers de serie Yahoo Finance (.MX).
 
     Retorna una lista de simbolos de ticker para la busqueda dada.
     Usa espacios o guiones bajos indistintamente.

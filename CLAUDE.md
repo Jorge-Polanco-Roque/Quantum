@@ -40,8 +40,9 @@ quantum/
 │   ├── graph.py                    # PortfolioAgentsGraph (passes sentiment_data + ensemble_data)
 │   ├── fundamental_analyst.py      # Single-call LLM: combines quant metrics + news → fundamental analysis
 │   ├── tools.py                    # 6 @tool functions incl. run_ensemble_optimization (Spanish docstrings)
-│   │                               #   SECTOR_TICKERS: 90 categories, 334 unique tickers
-│   │                               #   Covers: sectors, countries, cryptos, indices, futures, ETFs
+│   │                               #   SECTOR_TICKERS: ~106 categories, ~380 unique tickers
+│   │                               #   TICKER_ALIASES: short fund names → Yahoo Finance .MX tickers
+│   │                               #   Covers: sectors, countries, cryptos, indices, futures, ETFs, UCITS, SIC
 │   └── portfolio_builder.py        # PortfolioBuilderAgent (ReAct agent, Spanish prompt, geo-aware)
 ├── dashboard/                      # Dash UI (dark mode, Plotly charts, all in Spanish)
 │   ├── layout.py                   # 7-row layout: header, NL+params+metrics, sliders+charts,
@@ -90,7 +91,7 @@ quantum/
 2. **Slider changes** → `risk.py` recalculates metrics in real-time → updates metric cards
 3. **ACTUALIZAR NOTICIAS** → `engine/sentiment.py` fetches yfinance news → keyword scoring → **`agents/fundamental_analyst.py`** combines quant metrics + news into a ponderacion cuantitativo-fundamental → renders per-ticker sentiment + AI fundamental analysis
 4. **Analisis AI (auto-triggered)** → fires automatically when `store-optimal-weights` changes (from EJECUTAR or NL Builder) → `agents/graph.py` runs LangGraph workflow with ensemble + sentiment data: Quant Analyst → Risk Analyst ↔ Market Analyst (debate) → Portfolio Advisor → displays recommendation. Also available as manual re-run via button.
-5. **CONSTRUIR PORTAFOLIO** → `agents/portfolio_builder.py` runs ReAct agent: interprets NL prompt → selects tickers → validates → optimizes → updates `store-tickers` + runs full pipeline (MC + ensemble + all charts) → **auto-triggers AI Analysis** (see #4)
+5. **CONSTRUIR PORTAFOLIO** → `agents/portfolio_builder.py` runs ReAct agent: interprets NL prompt → selects tickers → validates → assigns weights (manual for splits, SLSQP otherwise) → callback extracts `weights` from agent result → `_run_full_pipeline(preset_weights=weight_map)` uses agent weights instead of re-running SLSQP → updates `store-tickers` + runs full pipeline (MC + ensemble + all charts) → **auto-triggers AI Analysis** (see #4). When agent returns no weights or invalid weights, falls back to SLSQP.
 
 ## Ensemble Optimization (engine/ensemble.py)
 
@@ -120,14 +121,14 @@ Single LLM call that combines quantitative portfolio metrics with news sentiment
 ### NL Portfolio Builder (ReAct Agent, Spanish prompt)
 Uses `langgraph.prebuilt.create_react_agent` with 6 tools from `agents/tools.py`:
 - `validate_tickers` — checks ticker existence via yfinance
-- `search_tickers_by_sector` — returns tickers for sectors, countries, cryptos, indices, futures, ETFs (90 categories)
+- `search_tickers_by_sector` — returns tickers for sectors, countries, cryptos, indices, futures, ETFs, UCITS, SIC (~101 categories)
 - `fetch_and_analyze` — fetches data + returns summary stats (return, vol, correlation)
 - `run_optimization` — runs full MC + SLSQP pipeline, returns optimal weights + metrics
 - `get_portfolio_metrics` — calculates metrics for specific weight allocation
 - `run_ensemble_optimization` — runs all 7 methods + ensemble, returns comparison
 
 ### SECTOR_TICKERS Asset Coverage (agents/tools.py)
-90 curated mappings, 334 unique tickers:
+~106 curated mappings, ~380 unique tickers:
 - **Sectors** (20): technology, energy, healthcare, finance, consumer, industrial, real_estate, utilities, telecom, semiconductor, ai, ev, cloud, renewable, crypto (stocks), fintech, defense, biotech, retail, gaming
 - **Countries/Regions** (14): mexico, mexicanas, mexico_esr, mexico_ampliado, bmv/bolsa_mexicana (45 tickers), brazil/brasil, latam/latinoamerica, chile, colombia, argentina
 - **Themes** (6): esg, socialmente_responsable, sustainable/sustentable, magnificent7/mag7
@@ -136,9 +137,18 @@ Uses `langgraph.prebuilt.create_react_agent` with 6 tools from `agents/tools.py`
 - **Futuros** (6): futuros/futures, commodities/materias_primas, oro/gold, petroleo/oil
 - **ETFs mercado** (3): etf/etfs/etf_mercado (SPY, QQQ, IWM, etc.)
 - **ETFs sector** (7): etf_tech, etf_salud, etf_financiero, etf_energia, etf_industrial, etf_consumo, etf_inmobiliario
-- **ETFs tematicos** (5): etf_ark/etf_innovacion, etf_dividendos, etf_bonos/etf_renta_fija
+- **ETFs tematicos** (6): etf_ark/etf_innovacion, etf_dividendos, etf_dividendos_global, etf_bonos/etf_renta_fija
 - **ETFs commodities** (3): etf_oro, etf_plata, etf_commodities
 - **ETFs pais/region** (7): etf_mexico/naftrac, etf_brasil, etf_china, etf_emergentes, etf_europa, etf_japon, etf_global
+- **UCITS** (7): ucits/ucits_equity (VWRL.L, CSPX.L, IWDA.L, etc.), ucits_bonos/ucits_renta_fija (AGBP.L, IGLT.L, etc.), ucits_dividendos, ucits_oro, ucits_commodities
+- **SIC Mexico** (2): sic/sic_mexico — ~31 ETFs extranjeros disponibles en el Sistema Internacional de Cotizaciones
+- **Fondos Mexico** (5): fondos_mexico/fondos_inversion, fondos_blackrock/blackrock_mexico, fondos_gbm — BlackRock (BLKEM1, GOLD5+, BLKGUB1, BLKINT, BLKDOL, BLKLIQ, BLKRFA) + GBM (GBMCRE, GBMMOD, GBMF2, GBMINT)
+
+### TICKER_ALIASES (agents/tools.py)
+Maps common short fund names to Yahoo Finance series tickers. `validate_tickers` resolves aliases automatically:
+- BLKEM1 → BLKEM1C0-A.MX, GOLD5+ → GOLD5+B2-C.MX, BLKGUB1 → BLKGUB1B0-D.MX
+- BLKINT → BLKINTC0-A.MX, BLKDOL → BLKDOLB0-D.MX, BLKLIQ → BLKLIQB0-D.MX, BLKRFA → BLKRFAB0-C.MX
+- GBMCRE → GBMCREB2-A.MX, GBMMOD → GBMMODB2-A.MX, GBMF2 → GBMF2BO.MX, GBMINT → GBMINTB1.MX
 
 ## Dynamic Dashboard
 
@@ -180,6 +190,22 @@ python -c "from engine import *"        # Verify engine (incl. ensemble, sentime
 python -c "from agents import *"        # Verify agents (incl. PortfolioBuilderAgent)
 python -c "from config import get_ticker_name; print(get_ticker_name('AMX'))"  # Test ticker name
 ```
+
+## Next Steps
+
+### Chatbot Interactivo
+Agregar un chatbot conversacional que permita al usuario interactuar con todo lo que genero la herramienta:
+- **Contexto completo**: El chatbot debe tener acceso al estado actual del portafolio (pesos, metricas, resultados MC, ensemble, sentimiento, analisis AI) para responder preguntas contextuales.
+- **Preguntas sobre resultados**: "¿Por que BLKGUB1 tiene tanto peso?", "¿Que pasa si reduzco EMB?", "Explica el Sharpe Ratio de mi portafolio", "¿Cual es mi exposicion a mercados emergentes?"
+- **Modificaciones via chat**: "Sube ACWI a 10%", "Agrega BTC-USD al portafolio", "Cambia a un perfil mas conservador" — el chatbot interpreta y ejecuta cambios en los sliders/tickers.
+- **Analisis comparativo**: "Compara mi portafolio con el S&P 500", "¿Como se compara vs el ensemble de minima varianza?", "Muestra el drawdown si hubiera invertido hace 5 anos"
+- **Educativo**: Explicar conceptos (frontera eficiente, VaR, CML, HRP) en el contexto del portafolio actual del usuario.
+- **Implementacion sugerida**:
+  - Componente Dash: panel de chat colapsable en la esquina inferior derecha (estilo widget)
+  - Backend: LangGraph agent con acceso a los stores del dashboard (via callbacks)
+  - Tools del chatbot: leer estado actual, modificar pesos, re-ejecutar pipeline, consultar historico
+  - Memoria: mantener contexto de la conversacion dentro de la sesion
+  - UI: burbujas de chat con markdown rendering, dark mode consistente con el tema (#0d1117)
 
 ## Reference Materials
 

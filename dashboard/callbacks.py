@@ -43,8 +43,12 @@ from dashboard.components.drawdown_chart import create_drawdown_figure
 from dashboard.components.performance_chart import create_performance_figure
 
 
-def _run_full_pipeline(tickers, rf, num_sims, var_conf):
+def _run_full_pipeline(tickers, rf, num_sims, var_conf, preset_weights=None):
     """Run the full MC + optimization + ensemble pipeline.
+
+    When *preset_weights* is a ``{ticker: weight}`` dict the pipeline uses
+    those weights (re-normalised to available tickers) instead of running
+    SLSQP.  This lets the NL builder's manually-assigned splits survive.
 
     Returns a tuple with all outputs needed by CB1 and CB8.
     """
@@ -58,8 +62,16 @@ def _run_full_pipeline(tickers, rf, num_sims, var_conf):
     # Monte Carlo simulation
     mc = run_monte_carlo(mean_ret, cov_mat, num_sims=num_sims, risk_free_rate=rf)
 
-    # Analytical optimization
-    opt_weights = optimize_max_sharpe(mean_ret, cov_mat, risk_free_rate=rf)
+    # Optimal weights — use preset (agent) weights when provided
+    if preset_weights is not None:
+        raw = np.array([preset_weights.get(t, 0.0) for t in available_tickers])
+        w_sum = raw.sum()
+        if w_sum > 0:
+            opt_weights = raw / w_sum
+        else:
+            opt_weights = optimize_max_sharpe(mean_ret, cov_mat, risk_free_rate=rf)
+    else:
+        opt_weights = optimize_max_sharpe(mean_ret, cov_mat, risk_free_rate=rf)
     opt_metrics = calc_portfolio_metrics(opt_weights, mean_ret, cov_mat, rf, var_conf)
     optimal_info = {
         "weights": opt_weights.tolist(),
@@ -544,6 +556,33 @@ def register_callbacks(app):
         new_tickers = result.get("tickers", [])
         reasoning = result.get("reasoning", "Portafolio construido exitosamente.")
 
+        # Extract agent weights (if the agent assigned them)
+        agent_weights = result.get("weights", None)
+        weight_map = None
+        if agent_weights and len(agent_weights) == len(new_tickers):
+            try:
+                weight_map = {t: float(w) for t, w in zip(new_tickers, agent_weights)}
+                w_sum = sum(weight_map.values())
+                if w_sum <= 0 or any(v < 0 for v in weight_map.values()):
+                    weight_map = None
+                elif weight_map is not None:
+                    # Safety net: if any ticker has 0 weight, give it a floor
+                    # of 2% and redistribute from the heaviest positions
+                    MIN_FLOOR = 0.02
+                    zeros = [t for t, w in weight_map.items() if w < MIN_FLOOR]
+                    if zeros and len(zeros) < len(weight_map):
+                        deficit = len(zeros) * MIN_FLOOR
+                        non_zeros = {t: w for t, w in weight_map.items() if w >= MIN_FLOOR}
+                        nz_sum = sum(non_zeros.values())
+                        scale = (nz_sum - deficit) / nz_sum if nz_sum > 0 else 1.0
+                        for t in weight_map:
+                            if t in non_zeros:
+                                weight_map[t] = non_zeros[t] * scale
+                            else:
+                                weight_map[t] = MIN_FLOOR
+            except (TypeError, ValueError):
+                weight_map = None
+
         if not new_tickers:
             return [no_update] * 2 + [
                 html.Div("No se seleccionaron tickers.", style={"color": "#fb923c", "fontSize": "0.75rem"})
@@ -551,7 +590,9 @@ def register_callbacks(app):
 
         # Now run the full pipeline with the agent-selected tickers
         try:
-            pipeline_result = _run_full_pipeline(new_tickers, rf, num_sims, var_conf)
+            pipeline_result = _run_full_pipeline(
+                new_tickers, rf, num_sims, var_conf, preset_weights=weight_map
+            )
         except Exception as exc:
             return [no_update] * 2 + [
                 html.Div(f"Error descargando datos: {exc}", style={"color": "#fb923c", "fontSize": "0.75rem"})
@@ -560,16 +601,45 @@ def register_callbacks(app):
         # Extract available tickers from the pipeline (some may have been filtered)
         available_tickers = pipeline_result[7]["tickers"]  # opt_store has tickers
 
-        output_msg = html.Div([
+        # Detect which tickers were filtered by yfinance
+        filtered_out = [t for t in new_tickers if t not in available_tickers]
+
+        # Determine weight method label
+        if weight_map:
+            # Check if agent assigned manual weights (all > 0) vs SLSQP (has zeros)
+            surviving_weights = [weight_map.get(t, 0.0) for t in available_tickers]
+            has_zeros = any(w == 0.0 for w in surviving_weights)
+            peso_method = "optimizacion del agente" if has_zeros else "pesos del agente"
+        else:
+            peso_method = "optimizacion SLSQP"
+
+        msg_children = [
             html.Div(
                 f"Portafolio construido: {', '.join(available_tickers)}",
                 style={"color": "#00d4aa", "fontSize": "0.75rem", "fontWeight": "600"},
             ),
             html.Div(
+                f"Metodo de pesos: {peso_method}",
+                style={"color": "#58a6ff", "fontSize": "0.7rem", "marginTop": "2px"},
+            ),
+        ]
+
+        if filtered_out:
+            msg_children.append(
+                html.Div(
+                    f"Tickers no disponibles en Yahoo Finance: {', '.join(filtered_out)}",
+                    style={"color": "#fb923c", "fontSize": "0.7rem", "marginTop": "2px"},
+                )
+            )
+
+        msg_children.append(
+            html.Div(
                 reasoning[:200],
                 style={"color": "#8b949e", "fontSize": "0.7rem", "marginTop": "4px"},
             ),
-        ])
+        )
+
+        output_msg = html.Div(msg_children)
 
         return [
             available_tickers,           # store-tickers
