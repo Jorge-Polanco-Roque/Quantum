@@ -52,6 +52,7 @@ quantum/
 │   ├── portfolio_builder.py        # PortfolioBuilderAgent (deterministic: selects tickers + method only)
 │   │                               #   LLM returns {tickers, method, reasoning} — NO weights
 │   │                               #   Exception: method="preset" includes user-specified weights
+│   │                               #   "0% en X" = exclude ticker (REGLA #3), never max=0 constraint
 │   │                               #   Uses BUILDER_TOOLS (3) — no access to optimization tools
 │   │                               #   Weight computation happens in dashboard callback
 │   └── chatbot.py                  # ChatbotAgent (conversational, InMemorySaver, portfolio context)
@@ -174,8 +175,10 @@ Methods: `"preset"` (user-specified exact percentages per ticker), `"ensemble"` 
 `"optimize"` (SLSQP Max Sharpe), `"equal_weight"` (1/N), `"risk_parity"`, `"min_variance"`, `"split"` (with groups specification).
 
 Constraints: Any method can include `"constraints"` with per-ticker bounds: `{"AAPL": {"min": 0.05, "max": 0.30}, "_all": {"max": 0.25}}`.
-The system distinguishes between preset (exact weights) and constraints (bounds for optimization).
+The system distinguishes between preset (exact weights), constraints (bounds for optimization), and exclusions ("0% en X" = ticker omitted from list entirely).
 Constraints are enforced at both the optimizer level (SLSQP bounds) and post-processing (`_apply_weight_floor`).
+
+Constraint normalization (callbacks.py, safety net): after parsing the agent's JSON, any ticker with `max<=0` or a lone `{"min": 0}` is removed from the ticker list (treated as exclusion). This guarantees deterministic results even if the LLM parses "0% en X" inconsistently between `{"max": 0}` and `{"min": 0}`.
 
 ### Chatbot Interactivo (agents/chatbot.py)
 Conversational agent using `create_react_agent` + `InMemorySaver` for multi-turn memory. Receives full portfolio context (tickers, weights, metrics, ensemble with full per-ticker weights and metrics per method, sentiment) injected as `[CONTEXTO DEL PORTAFOLIO]` block on each message. System prompt in Spanish. No tools (v1 — pure conversational with context). Thread ID (UUID) generated per page load.

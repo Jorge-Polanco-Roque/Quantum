@@ -848,6 +848,31 @@ def register_callbacks(app):
         constraints = result.get("constraints", None)
         reasoning = result.get("reasoning", "Portafolio construido exitosamente.")
 
+        # ── Normalize constraints: remove tickers with max<=0 (exclusions) ──
+        if constraints:
+            excluded = set()
+            for tk, c in list(constraints.items()):
+                if tk == "_all":
+                    continue
+                c_max = c.get("max")
+                c_min = c.get("min")
+                # max=0 → user wants to exclude this ticker
+                if c_max is not None and float(c_max) <= 0:
+                    excluded.add(tk)
+                    del constraints[tk]
+                # min=0 with no max → LLM misread "0% en X" as min=0;
+                # since min=0 is already the default, treat as exclusion
+                elif c_min is not None and float(c_min) <= 0 and c_max is None and len(c) == 1:
+                    excluded.add(tk)
+                    del constraints[tk]
+            if excluded:
+                new_tickers = [t for t in new_tickers if t not in excluded]
+            # If constraints dict is empty (or only _all left with no entries), clear it
+            remaining = {k: v for k, v in constraints.items() if k != "_all"}
+            global_c = constraints.get("_all", {})
+            if not remaining and not global_c:
+                constraints = None
+
         # Compute weights deterministically based on method
         if method == "preset" and result.get("weights"):
             # User gave exact percentages — use them directly

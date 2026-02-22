@@ -63,16 +63,22 @@ Si el usuario establece LIMITES de peso (no pesos exactos), incluye "constraints
   - "_all" se aplica a TODOS los tickers. Si un ticker tiene constraint individual
     Y existe "_all", el individual tiene prioridad sobre "_all".
 
-  ⚠️ DISTINGUIR "preset" vs "constraints":
+  ⚠️ DISTINGUIR "preset" vs "constraints" vs "exclusion":
   - PRESET: el usuario da pesos EXACTOS por ticker → method="preset" + "weights"
     Ejemplo: "50% AAPL, 30% MSFT, 20% GOOGL"
   - CONSTRAINTS: el usuario da LIMITES → cualquier method + "constraints"
     Ejemplo: "portafolio tech, maximo 20% por ticker, al menos 5% en NVDA"
     Ejemplo: "acciones de energia, que NVDA no pase de 15%"
     Ejemplo: "mag7 pero minimo 10% en AAPL y maximo 25% en cualquiera"
+  - EXCLUSION (0%): si el usuario dice "0% en X", "sin X", "excluir X",
+    "que no tenga X", "nada de X" → NO incluyas X en la lista de tickers.
+    Simplemente omitelo. NUNCA uses constraints con max=0.
+    Ejemplo: "quiero tech pero 0% en INTC" → tickers sin INTC, sin constraint.
+    Ejemplo: "mantenlo pero sin EMB" → tickers sin EMB, sin constraint.
 
   Si el usuario dice "al menos X%", eso es min. Si dice "maximo X%", eso es max.
   Si dice "no mas de X%", eso es max. Si dice "como minimo X%", eso es min.
+  Si dice "0% en X" o "nada en X" → EXCLUIR del portafolio (no incluir en tickers).
 
 ═══════════════════════════════════════════════════════════════════════════
 
