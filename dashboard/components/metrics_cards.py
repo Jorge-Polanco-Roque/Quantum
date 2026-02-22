@@ -62,5 +62,5 @@ def create_metrics_cards():
                 md=3,
             ),
         ],
-        className="g-3",
+        className="g-2",
     )

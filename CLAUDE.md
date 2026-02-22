@@ -45,7 +45,12 @@ quantum/
 │   │                               #   SECTOR_TICKERS: ~106 categories, ~380 unique tickers
 │   │                               #   TICKER_ALIASES: short fund names → Yahoo Finance .MX tickers
 │   │                               #   Covers: sectors, countries, cryptos, indices, futures, ETFs, UCITS, SIC
-│   ├── portfolio_builder.py        # PortfolioBuilderAgent (ReAct agent, Spanish prompt, geo-aware)
+│   │                               #   ALL_TOOLS (6): full set for chatbot v2 / other consumers
+│   │                               #   BUILDER_TOOLS (3): validate, search, analyze (no optimization)
+│   ├── portfolio_builder.py        # PortfolioBuilderAgent (deterministic: selects tickers + method only)
+│   │                               #   LLM returns {tickers, method, reasoning} — NO weights
+│   │                               #   Uses BUILDER_TOOLS (3) — no access to optimization tools
+│   │                               #   Weight computation happens in dashboard callback
 │   └── chatbot.py                  # ChatbotAgent (conversational, InMemorySaver, portfolio context)
 ├── dashboard/                      # Dash UI (dark mode, Plotly charts, all in Spanish)
 │   ├── layout.py                   # Adaptive layout: dashboard (3/4) + chat sidebar (1/4)
@@ -60,7 +65,9 @@ quantum/
 │   │                               #   optimo, igual, random, norm, agents (manual),
 │   │                               #   auto-agents (store-triggered), NL builder, weight
 │   │                               #   displays, sentiment+fundamental, chat-init, chat-send
-│   │                               #   Helper: _compute_position_styles(pos) → 3 style dicts
+│   │                               #   Helpers: _compute_position_styles(pos) → 3 style dicts
+│   │                               #   _compute_split_weights(tickers, split_data) → deterministic split
+│   │                               #   _apply_weight_floor(weight_map, min_floor) → floor redistribution
 │   ├── components/
 │   │   ├── parameters.py           # Tasa Libre%, Simulaciones, VaR Nivel% inputs
 │   │   ├── metrics_cards.py        # 4 KPI cards (Sharpe, Return, Vol, VaR)
@@ -104,7 +111,7 @@ quantum/
 2. **Slider changes** → `risk.py` recalculates metrics in real-time → updates metric cards
 3. **ACTUALIZAR NOTICIAS** → `engine/sentiment.py` fetches yfinance news → keyword scoring → **`agents/fundamental_analyst.py`** combines quant metrics + news into a ponderacion cuantitativo-fundamental → renders per-ticker sentiment + AI fundamental analysis
 4. **Analisis AI (auto-triggered)** → fires automatically when `store-optimal-weights` changes (from EJECUTAR or NL Builder) → `agents/graph.py` runs LangGraph workflow with ensemble + sentiment data: Quant Analyst → Risk Analyst ↔ Market Analyst (debate) → Portfolio Advisor → displays recommendation. Also available as manual re-run via button.
-5. **CONSTRUIR PORTAFOLIO** → `agents/portfolio_builder.py` runs ReAct agent: interprets NL prompt → selects tickers → validates → assigns weights (manual for splits, SLSQP otherwise) → callback extracts `weights` from agent result → `_run_full_pipeline(preset_weights=weight_map)` uses agent weights instead of re-running SLSQP → updates `store-tickers` + runs full pipeline (MC + ensemble + all charts) → **auto-triggers AI Analysis** (see #4). When agent returns no weights or invalid weights, falls back to SLSQP.
+5. **CONSTRUIR PORTAFOLIO** → `agents/portfolio_builder.py` runs ReAct agent with BUILDER_TOOLS (3): interprets NL prompt → selects tickers → validates → returns `{tickers, method, reasoning}` (NO weights). Callback computes weights deterministicaly: `method="optimize"` → SLSQP, `"equal_weight"` → 1/N, `"risk_parity"` → engine risk parity, `"min_variance"` → engine min variance, `"split"` → `_compute_split_weights()`. Then `_run_full_pipeline(preset_weights=weight_map, method=method)` → `_apply_weight_floor()` ensures min 2% per ticker → updates `store-tickers` + runs full pipeline (MC + ensemble + all charts) → **auto-triggers AI Analysis** (see #4). Same prompt always produces identical weights.
 6. **Chatbot** → always-visible sidebar (1/4, repositionable via toggle buttons) → user types question → callback reads all portfolio stores → builds context dict → `agents/chatbot.py` ChatbotAgent.chat() with InMemorySaver for multi-turn memory → returns markdown response rendered in chat bubble.
 7. **Chat position toggle** → click ◀▲▼▶ buttons → `switch_chat_position` callback updates inline styles on `#app-layout`, `#dashboard-main`, `#chat-sidebar` via `_compute_position_styles(pos)` → CSS `flex-direction` + `order` switch without DOM rebuild → chat history and all stores preserved.
 
@@ -133,19 +140,25 @@ All agents receive `sentiment_data` and `ensemble_data` in state. Prompts are en
 ### Fundamental Analyst (agents/fundamental_analyst.py)
 Single LLM call that combines quantitative portfolio metrics with news sentiment. Triggered by the "ACTUALIZAR NOTICIAS" button. Produces a markdown analysis covering: news impact per asset, sentiment vs quantitative alignment, uncaptured fundamental risks, and a final recommendation.
 
-### NL Portfolio Builder (ReAct Agent, Spanish prompt)
-Uses `langgraph.prebuilt.create_react_agent` with 6 tools from `agents/tools.py`:
+### NL Portfolio Builder (Deterministic — ReAct Agent, Spanish prompt)
+Uses `langgraph.prebuilt.create_react_agent` with `BUILDER_TOOLS` (3 tools) from `agents/tools.py`:
 - `validate_tickers` — checks ticker existence via yfinance
 - `search_tickers_by_sector` — returns tickers for sectors, countries, cryptos, indices, futures, ETFs, UCITS, SIC (~101 categories)
 - `fetch_and_analyze` — fetches data + returns summary stats (return, vol, correlation)
-- `run_optimization` — runs full MC + SLSQP pipeline, returns optimal weights + metrics
-- `get_portfolio_metrics` — calculates metrics for specific weight allocation
-- `run_ensemble_optimization` — runs all 7 methods + ensemble, returns comparison
+
+The LLM has NO access to optimization tools — it only selects tickers and chooses a method.
+Returns `{tickers, method, reasoning}` (and `split` when method="split"). Weight computation
+happens deterministically in the dashboard callback via `_compute_split_weights()`, engine
+optimizers (`risk_parity_portfolio`, `min_variance_portfolio`, `optimize_max_sharpe`), or
+equal weight. `_apply_weight_floor()` ensures every ticker gets >= 2%.
+
+Methods: `"optimize"` (SLSQP Max Sharpe, default), `"equal_weight"` (1/N),
+`"risk_parity"`, `"min_variance"`, `"split"` (with groups specification).
 
 ### Chatbot Interactivo (agents/chatbot.py)
 Conversational agent using `create_react_agent` + `InMemorySaver` for multi-turn memory. Receives full portfolio context (tickers, weights, metrics, ensemble, sentiment) injected as `[CONTEXTO DEL PORTAFOLIO]` block on each message. System prompt in Spanish. No tools (v1 — pure conversational with context). Thread ID (UUID) generated per page load.
 
-Dashboard integration: always-visible sidebar (`chat_widget.py`, 1/4 of screen, dynamically repositionable) with 3 callbacks — init (generate thread_id), send (build context from stores → ChatbotAgent.chat() → render markdown bubbles), position toggle (switch_chat_position). Layout uses CSS flexbox: `.app-layout` (flex row/column) → `.dashboard-main` (flex: 1, fills remaining space) + `.chat-sidebar` (flex: none, width: 25%). Position toggle buttons (◀▲▼▶) in chat header switch between right/left/top/bottom by changing inline styles on 3 container IDs (`app-layout`, `dashboard-main`, `chat-sidebar`) — no DOM rebuild, all state preserved. `_compute_position_styles(pos)` returns the 3 style dicts per position. Responsive: stacks vertically below 1200px.
+Dashboard integration: always-visible sidebar (`chat_widget.py`, 300px fixed, dynamically repositionable) with 3 callbacks — init (generate thread_id), send (build context from stores → ChatbotAgent.chat() → render markdown bubbles), position toggle (switch_chat_position). Layout uses CSS flexbox: `.app-layout` (100vw × 100vh flex row) → `.dashboard-main` (flex: 1 1 0%, fills remaining space, min-width: 0) + `.chat-sidebar` (flex: 0 0 300px, rigid). Dash internal wrappers (`#react-entry-point`, `#_dash-app-content`) are explicitly sized to 100% to prevent layout interference. Position toggle buttons (◀▲▼▶) in chat header switch between right/left/top/bottom by changing inline styles on 3 container IDs (`app-layout`, `dashboard-main`, `chat-sidebar`) — no DOM rebuild, all state preserved. `_compute_position_styles(pos)` returns the 3 style dicts per position. Left/Right: only order + border changes (no flex overrides). Top/Bottom: flex-direction column + sidebar width: 100% + height: 25vh. Responsive: stacks vertically below 1200px.
 
 ### SECTOR_TICKERS Asset Coverage (agents/tools.py)
 ~106 curated mappings, ~380 unique tickers:
@@ -212,7 +225,9 @@ Ticker labels show the full company name on hover via HTML `title` attribute. Th
 
 ## CSS Scoped Styles (dashboard/assets/style.css)
 
-Markdown rendered inside `.agent-panel`, `#sentiment-output`, and `.chat-bubble-assistant` has scoped heading sizes (h1: 0.85rem, h2: 0.8rem, h3: 0.75rem) to keep content compact within dark-mode panels. The agent panel h1 gets an accent-colored bottom border as a visual separator. Chat sidebar uses `position: sticky; top: 0; height: 100vh` to stay pinned while the dashboard scrolls. Position toggle buttons (`.chat-pos-btn`, `.chat-pos-btn-active`) are 22x22px compact buttons with accent highlight on active state. Chat sidebar base CSS sets `flex: none; width: 25%; max-width: 25%` — inline styles from the callback override borders and dimensions per position.
+Markdown rendered inside `.agent-panel`, `#sentiment-output`, and `.chat-bubble-assistant` has scoped heading sizes (h1: 0.85rem, h2: 0.8rem, h3: 0.75rem) to keep content compact within dark-mode panels. The agent panel h1 gets an accent-colored bottom border as a visual separator.
+
+**Layout model**: `.app-layout` uses `width: 100vw; height: 100vh; display: flex` (no `position: fixed` to avoid Dash wrapper conflicts). Dash wrappers (`#react-entry-point`, `#_dash-app-content`) are explicitly set to `width: 100%; height: 100%`. Dashboard uses `flex: 1 1 0% !important; min-width: 0 !important` — the `!important` flags prevent Bootstrap DARKLY theme overrides. Chat sidebar uses `flex: 0 0 300px !important; width: 300px !important; max-width: 300px` — rigid 300px that never grows or shrinks. `_compute_position_styles(pos)` in callbacks.py returns inline style dicts: left/right only set `order` + borders (never `flex` or `width`); top/bottom override sidebar to `width: 100%; flex: 0 0 25vh`. Position toggle buttons (`.chat-pos-btn`, `.chat-pos-btn-active`) are 22x22px compact buttons with accent highlight on active state. Responsive: `@media (max-width: 1200px)` stacks vertically with `!important` overrides.
 
 ## Development Commands
 

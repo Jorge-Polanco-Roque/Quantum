@@ -47,15 +47,106 @@ from dashboard.components.drawdown_chart import create_drawdown_figure
 from dashboard.components.performance_chart import create_performance_figure
 
 
-def _run_full_pipeline(tickers, rf, num_sims, var_conf, preset_weights=None):
+def _compute_split_weights(tickers, split_data):
+    """Compute deterministic weights from a split specification.
+
+    *split_data* has the form::
+
+        {"groups": {
+            "equity": {"tickers": ["AAPL", "MSFT"], "weight": 0.7},
+            "bonds":  {"tickers": ["BND", "AGG"],  "weight": 0.3},
+        }}
+
+    Each group's weight is distributed equally among its tickers.
+    Tickers not in any group get the residual (if any) split equally.
+    Returns a ``{ticker: weight}`` dict that sums to 1.0.
+    """
+    groups = split_data.get("groups", {})
+    weight_map = {}
+    assigned = set()
+    total_group_weight = 0.0
+
+    for _label, gdata in groups.items():
+        g_tickers = [t for t in gdata.get("tickers", []) if t in tickers]
+        g_weight = float(gdata.get("weight", 0))
+        if g_tickers:
+            per_ticker = g_weight / len(g_tickers)
+            for t in g_tickers:
+                weight_map[t] = weight_map.get(t, 0.0) + per_ticker
+                assigned.add(t)
+            total_group_weight += g_weight
+
+    # Residual tickers (in tickers list but not in any group)
+    residual = [t for t in tickers if t not in assigned]
+    residual_weight = max(1.0 - total_group_weight, 0.0)
+    if residual and residual_weight > 0:
+        per_r = residual_weight / len(residual)
+        for t in residual:
+            weight_map[t] = per_r
+    elif residual:
+        # No residual budget — give them zero (floor will fix later)
+        for t in residual:
+            weight_map.setdefault(t, 0.0)
+
+    # Ensure every requested ticker is present
+    for t in tickers:
+        weight_map.setdefault(t, 0.0)
+
+    # Normalize to exactly 1.0
+    w_sum = sum(weight_map.values())
+    if w_sum > 0:
+        weight_map = {t: w / w_sum for t, w in weight_map.items()}
+    else:
+        eq = 1.0 / len(tickers)
+        weight_map = {t: eq for t in tickers}
+
+    return weight_map
+
+
+def _apply_weight_floor(weight_map, min_floor=0.02):
+    """Ensure every ticker has at least *min_floor* weight.
+
+    Reduces heavier positions proportionally to fund the floor.
+    Returns a new dict; always sums to 1.0.  Fully deterministic.
+    """
+    zeros = [t for t, w in weight_map.items() if w < min_floor]
+    if not zeros or len(zeros) >= len(weight_map):
+        return weight_map
+
+    deficit = sum(max(min_floor - weight_map[t], 0) for t in zeros)
+    non_zeros = {t: w for t, w in weight_map.items() if w >= min_floor}
+    nz_sum = sum(non_zeros.values())
+    scale = (nz_sum - deficit) / nz_sum if nz_sum > 0 else 1.0
+
+    result = {}
+    for t in weight_map:
+        if t in non_zeros:
+            result[t] = non_zeros[t] * scale
+        else:
+            result[t] = min_floor
+
+    # Final normalization for floating-point safety
+    r_sum = sum(result.values())
+    if r_sum > 0:
+        result = {t: w / r_sum for t, w in result.items()}
+    return result
+
+
+def _run_full_pipeline(tickers, rf, num_sims, var_conf, preset_weights=None,
+                       method="optimize"):
     """Run the full MC + optimization + ensemble pipeline.
 
-    When *preset_weights* is a ``{ticker: weight}`` dict the pipeline uses
-    those weights (re-normalised to available tickers) instead of running
-    SLSQP.  This lets the NL builder's manually-assigned splits survive.
+    *preset_weights*: ``{ticker: weight}`` dict — when provided the pipeline
+    uses those weights (re-normalised) instead of running an optimizer.
+
+    *method*: optimization method name.  When ``preset_weights`` is ``None``
+    and method is ``"risk_parity"`` or ``"min_variance"``, the corresponding
+    ensemble method weights are used instead of SLSQP Max Sharpe.
 
     Returns a tuple with all outputs needed by CB1 and CB8.
     """
+    from engine.ensemble import risk_parity_portfolio, min_variance_portfolio
+
     # Fetch data and compute stats
     prices = fetch_stock_data(tickers=tickers)
     available_tickers = list(prices.columns)
@@ -66,7 +157,7 @@ def _run_full_pipeline(tickers, rf, num_sims, var_conf, preset_weights=None):
     # Monte Carlo simulation
     mc = run_monte_carlo(mean_ret, cov_mat, num_sims=num_sims, risk_free_rate=rf)
 
-    # Optimal weights — use preset (agent) weights when provided
+    # Optimal weights — determined by preset_weights or method
     if preset_weights is not None:
         raw = np.array([preset_weights.get(t, 0.0) for t in available_tickers])
         w_sum = raw.sum()
@@ -74,8 +165,18 @@ def _run_full_pipeline(tickers, rf, num_sims, var_conf, preset_weights=None):
             opt_weights = raw / w_sum
         else:
             opt_weights = optimize_max_sharpe(mean_ret, cov_mat, risk_free_rate=rf)
+    elif method == "risk_parity":
+        opt_weights = risk_parity_portfolio(mean_ret, cov_mat, rf)
+    elif method == "min_variance":
+        opt_weights = min_variance_portfolio(mean_ret, cov_mat, rf)
     else:
         opt_weights = optimize_max_sharpe(mean_ret, cov_mat, risk_free_rate=rf)
+
+    # Apply weight floor — ensure every ticker gets >= 2%
+    floor_map = _apply_weight_floor(
+        {t: float(w) for t, w in zip(available_tickers, opt_weights)}
+    )
+    opt_weights = np.array([floor_map[t] for t in available_tickers])
     opt_metrics = calc_portfolio_metrics(opt_weights, mean_ret, cov_mat, rf, var_conf)
     optimal_info = {
         "weights": opt_weights.tolist(),
@@ -179,47 +280,50 @@ def _run_full_pipeline(tickers, rf, num_sims, var_conf, preset_weights=None):
 
 
 def _compute_position_styles(position):
-    """Return (layout_style, main_style, sidebar_style) for a chat position."""
+    """Return (layout_style, main_style, sidebar_style) for a chat position.
+
+    The app-layout uses ``position: fixed; inset: 0`` so it is exactly the
+    viewport.  The dashboard uses ``flex: 1 1 0%`` (fills remaining space)
+    and the sidebar uses ``flex: 0 0 300px`` (rigid).
+
+    Left/Right: only change ``order`` and borders — never touch ``flex`` or
+    ``width`` so the CSS rules apply cleanly.
+
+    Top/Bottom: switch to ``flex-direction: column``.  Override sidebar to
+    full-width + fixed height, and dashboard to ``flex: 1`` for height fill.
+    """
     if position == "left":
         layout_style = {"flexDirection": "row"}
-        main_style = {"order": "1", "flex": "1"}
+        main_style = {"order": "1"}
         sidebar_style = {
             "order": "-1",
-            "flex": "none",
-            "width": "25%",
-            "maxWidth": "25%",
-            "height": "100vh",
-            "maxHeight": "",
             "borderLeft": "none",
             "borderRight": "1px solid #30363d",
             "borderTop": "none",
             "borderBottom": "none",
         }
     elif position == "top":
-        layout_style = {"flexDirection": "column", "height": "100vh"}
-        main_style = {"order": "1", "flex": "1", "minHeight": "0"}
+        layout_style = {"flexDirection": "column"}
+        main_style = {"order": "1", "minHeight": "0"}
         sidebar_style = {
             "order": "-1",
-            "flex": "none",
-            "maxWidth": "100%",
+            "flex": "0 0 25vh",
             "width": "100%",
+            "maxWidth": "100%",
             "height": "25vh",
-            "maxHeight": "25vh",
             "borderLeft": "none",
             "borderRight": "none",
             "borderTop": "none",
             "borderBottom": "1px solid #30363d",
         }
     elif position == "bottom":
-        layout_style = {"flexDirection": "column", "height": "100vh"}
-        main_style = {"order": "-1", "flex": "1", "minHeight": "0"}
+        layout_style = {"flexDirection": "column"}
+        main_style = {"minHeight": "0"}
         sidebar_style = {
-            "order": "1",
-            "flex": "none",
-            "maxWidth": "100%",
+            "flex": "0 0 25vh",
             "width": "100%",
+            "maxWidth": "100%",
             "height": "25vh",
-            "maxHeight": "25vh",
             "borderLeft": "none",
             "borderRight": "none",
             "borderTop": "1px solid #30363d",
@@ -227,13 +331,8 @@ def _compute_position_styles(position):
         }
     else:  # right (default)
         layout_style = {"flexDirection": "row"}
-        main_style = {"flex": "1"}
+        main_style = {}
         sidebar_style = {
-            "flex": "none",
-            "width": "25%",
-            "maxWidth": "25%",
-            "height": "100vh",
-            "maxHeight": "",
             "borderLeft": "1px solid #30363d",
             "borderRight": "none",
             "borderTop": "none",
@@ -666,36 +765,24 @@ def register_callbacks(app):
                 ])
             return [no_update] * 2 + [output_msg] + [no_update] * 18
 
-        # Parse agent result
+        # Parse agent result — deterministic weight computation
         new_tickers = result.get("tickers", [])
+        method = result.get("method", "optimize")
+        split_data = result.get("split", None)
         reasoning = result.get("reasoning", "Portafolio construido exitosamente.")
 
-        # Extract agent weights (if the agent assigned them)
-        agent_weights = result.get("weights", None)
-        weight_map = None
-        if agent_weights and len(agent_weights) == len(new_tickers):
-            try:
-                weight_map = {t: float(w) for t, w in zip(new_tickers, agent_weights)}
-                w_sum = sum(weight_map.values())
-                if w_sum <= 0 or any(v < 0 for v in weight_map.values()):
-                    weight_map = None
-                elif weight_map is not None:
-                    # Safety net: if any ticker has 0 weight, give it a floor
-                    # of 2% and redistribute from the heaviest positions
-                    MIN_FLOOR = 0.02
-                    zeros = [t for t, w in weight_map.items() if w < MIN_FLOOR]
-                    if zeros and len(zeros) < len(weight_map):
-                        deficit = len(zeros) * MIN_FLOOR
-                        non_zeros = {t: w for t, w in weight_map.items() if w >= MIN_FLOOR}
-                        nz_sum = sum(non_zeros.values())
-                        scale = (nz_sum - deficit) / nz_sum if nz_sum > 0 else 1.0
-                        for t in weight_map:
-                            if t in non_zeros:
-                                weight_map[t] = non_zeros[t] * scale
-                            else:
-                                weight_map[t] = MIN_FLOOR
-            except (TypeError, ValueError):
-                weight_map = None
+        # Compute weights deterministically based on method
+        if method == "split" and split_data:
+            weight_map = _compute_split_weights(new_tickers, split_data)
+        elif method == "equal_weight":
+            eq = 1.0 / len(new_tickers) if new_tickers else 0
+            weight_map = {t: eq for t in new_tickers}
+        elif method in ("risk_parity", "min_variance"):
+            # Pipeline will compute via the corresponding engine method
+            weight_map = None
+        else:
+            # "optimize" or unknown → SLSQP Max Sharpe (default)
+            weight_map = None
 
         if not new_tickers:
             return [no_update] * 2 + [
@@ -705,7 +792,8 @@ def register_callbacks(app):
         # Now run the full pipeline with the agent-selected tickers
         try:
             pipeline_result = _run_full_pipeline(
-                new_tickers, rf, num_sims, var_conf, preset_weights=weight_map
+                new_tickers, rf, num_sims, var_conf,
+                preset_weights=weight_map, method=method,
             )
         except Exception as exc:
             return [no_update] * 2 + [
@@ -719,13 +807,14 @@ def register_callbacks(app):
         filtered_out = [t for t in new_tickers if t not in available_tickers]
 
         # Determine weight method label
-        if weight_map:
-            # Check if agent assigned manual weights (all > 0) vs SLSQP (has zeros)
-            surviving_weights = [weight_map.get(t, 0.0) for t in available_tickers]
-            has_zeros = any(w == 0.0 for w in surviving_weights)
-            peso_method = "optimizacion del agente" if has_zeros else "pesos del agente"
-        else:
-            peso_method = "optimizacion SLSQP"
+        METHOD_LABELS = {
+            "optimize": "SLSQP Max Sharpe",
+            "equal_weight": "Pesos Iguales (1/N)",
+            "risk_parity": "Paridad de Riesgo",
+            "min_variance": "Minima Varianza",
+            "split": "Split deterministico",
+        }
+        peso_method = METHOD_LABELS.get(method, method)
 
         msg_children = [
             html.Div(

@@ -14,10 +14,11 @@ def create_chat_panel():
                 className="chat-header",
                 children=[
                     html.Span("ASISTENTE AI", className="chat-header-title"),
-                    # Position toggle buttons
                     html.Div(
-                        className="chat-position-toggles",
+                        className="chat-header-controls",
                         children=[
+                            html.Span("CTX", className="chat-badge", title="Contexto del portafolio"),
+                            html.Span("MT", className="chat-badge", title="Multi-turn memory"),
                             html.Button(
                                 "\u25C0", id="chat-pos-left", n_clicks=0,
                                 className="chat-pos-btn",
@@ -38,13 +39,6 @@ def create_chat_panel():
                                 className="chat-pos-btn chat-pos-btn-active",
                                 title="Chat a la derecha",
                             ),
-                        ],
-                    ),
-                    html.Div(
-                        className="chat-header-badges",
-                        children=[
-                            html.Span("CONTEXTO", className="chat-badge"),
-                            html.Span("MULTI-TURN", className="chat-badge"),
                         ],
                     ),
                 ],

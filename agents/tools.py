@@ -487,3 +487,9 @@ ALL_TOOLS = [
     get_portfolio_metrics,
     run_ensemble_optimization,
 ]
+
+# Subset for the NL Portfolio Builder — only selection/validation tools.
+# Excludes optimization tools so the LLM never sees computed weights and
+# is not tempted to modify them.  Weight calculation happens deterministically
+# in the dashboard callback.
+BUILDER_TOOLS = [validate_tickers, search_tickers_by_sector, fetch_and_analyze]

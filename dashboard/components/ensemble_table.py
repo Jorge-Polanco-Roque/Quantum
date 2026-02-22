@@ -1,13 +1,18 @@
-"""Ensemble comparison table — DataTable showing all methods side by side."""
+"""Ensemble comparison table — professional ranked HTML table with Sharpe bars."""
 
-from dash import html, dash_table
+from dash import html
+
+# Abbreviate long method names to prevent wrapping in tight md=4 column
+_NAME_SHORT = {
+    "Paridad de Riesgo": "Par. Riesgo",
+    "Max. Diversificacion": "Max. Divers.",
+    "Ensemble (Promedio Simple)": "Ens. Promedio",
+    "Ensemble (Pond. Sharpe)": "Ens. Ponderado",
+}
 
 
 def create_ensemble_table(ensemble_data=None):
-    """Build a DataTable comparing all optimization methods.
-
-    *ensemble_data* is the dict from run_all_methods() + ensemble_vote().
-    """
+    """Build a professional ranked HTML table comparing all optimization methods."""
     if ensemble_data is None:
         return html.Div(
             className="card",
@@ -20,79 +25,72 @@ def create_ensemble_table(ensemble_data=None):
             ],
         )
 
-    rows = []
-    best_sharpe = -999
-    best_key = ""
-
-    # Collect all methods
+    # Collect rows
+    items = []
     for key, data in ensemble_data.items():
         metrics = data.get("metrics", {})
-        sharpe = metrics.get("sharpe_ratio", 0)
-        if sharpe > best_sharpe:
-            best_sharpe = sharpe
-            best_key = key
-
-        rows.append({
-            "Metodo": data.get("nombre", key),
-            "Retorno": f"{metrics.get('expected_return', 0) * 100:.2f}%",
-            "Volatilidad": f"{metrics.get('volatility', 0) * 100:.2f}%",
-            "Sharpe": f"{sharpe:.4f}",
-            "VaR 95%": f"{metrics.get('var', 0) * 100:.2f}%",
+        name = data.get("nombre", key)
+        items.append({
+            "nombre": _NAME_SHORT.get(name, name),
+            "retorno": metrics.get("expected_return", 0),
+            "volatilidad": metrics.get("volatility", 0),
+            "sharpe": metrics.get("sharpe_ratio", 0),
+            "var": metrics.get("var", 0),
         })
 
-    columns = [
-        {"name": "Metodo", "id": "Metodo"},
-        {"name": "Retorno", "id": "Retorno"},
-        {"name": "Volatilidad", "id": "Volatilidad"},
-        {"name": "Sharpe", "id": "Sharpe"},
-        {"name": "VaR 95%", "id": "VaR 95%"},
-    ]
+    # Sort by Sharpe descending (ranking)
+    items.sort(key=lambda x: x["sharpe"], reverse=True)
+    max_sharpe = items[0]["sharpe"] if items and items[0]["sharpe"] > 0 else 1
 
-    # Highlight the row with best Sharpe
-    style_data_conditional = [
-        {
-            "if": {"row_index": i},
-            "backgroundColor": "rgba(0, 212, 170, 0.15)",
-            "fontWeight": "700",
-        }
-        for i, row in enumerate(rows)
-        if row["Metodo"] == ensemble_data.get(best_key, {}).get("nombre", "")
-    ]
+    # Header
+    header = html.Thead(html.Tr([
+        html.Th("#", className="et-col-rank"),
+        html.Th("Metodo", className="et-col-name"),
+        html.Th("Ret.", className="et-col-num"),
+        html.Th("Vol.", className="et-col-num"),
+        html.Th("Sharpe", className="et-col-sharpe"),
+        html.Th("VaR", className="et-col-num"),
+    ]))
 
-    table = dash_table.DataTable(
-        data=rows,
-        columns=columns,
-        style_table={
-            "overflowX": "auto",
-            "borderRadius": "8px",
-        },
-        style_header={
-            "backgroundColor": "#0d1117",
-            "color": "#8b949e",
-            "fontWeight": "600",
-            "fontSize": "0.7rem",
-            "textTransform": "uppercase",
-            "letterSpacing": "1px",
-            "border": "1px solid #30363d",
-            "fontFamily": "'JetBrains Mono', monospace",
-        },
-        style_cell={
-            "backgroundColor": "#161b22",
-            "color": "#e6edf3",
-            "border": "1px solid #30363d",
-            "fontFamily": "'JetBrains Mono', monospace",
-            "fontSize": "0.75rem",
-            "textAlign": "center",
-            "padding": "8px 12px",
-        },
-        style_data_conditional=style_data_conditional,
-        style_as_list_view=False,
+    # Body rows
+    body_rows = []
+    for rank, item in enumerate(items, 1):
+        is_best = rank == 1
+        sharpe_pct = max(0, item["sharpe"] / max_sharpe * 100) if max_sharpe > 0 else 0
+
+        # Sharpe cell with proportional background bar
+        sharpe_cell = html.Td(
+            className="et-col-sharpe et-sharpe-cell",
+            children=[
+                html.Div(className="et-sharpe-bar", style={"width": f"{sharpe_pct:.0f}%"}),
+                html.Span(f"{item['sharpe']:.2f}", className="et-sharpe-value"),
+            ],
+        )
+
+        rank_badge_cls = "et-rank-badge et-rank-best" if is_best else "et-rank-badge"
+        row_cls = "et-row et-row-best" if is_best else "et-row"
+
+        body_rows.append(html.Tr(
+            className=row_cls,
+            children=[
+                html.Td(html.Span(str(rank), className=rank_badge_cls), className="et-col-rank"),
+                html.Td(item["nombre"], className="et-col-name"),
+                html.Td(f"{item['retorno'] * 100:.2f}%", className="et-col-num"),
+                html.Td(f"{item['volatilidad'] * 100:.2f}%", className="et-col-num"),
+                sharpe_cell,
+                html.Td(f"{item['var'] * 100:.2f}%", className="et-col-num"),
+            ],
+        ))
+
+    table = html.Table(
+        className="ensemble-table",
+        children=[header, html.Tbody(body_rows)],
     )
 
     return html.Div(
         className="card",
         children=[
             html.Div("COMPARACION ENSEMBLE", className="section-title"),
-            table,
+            html.Div(table, style={"overflowX": "auto"}),
         ],
     )
