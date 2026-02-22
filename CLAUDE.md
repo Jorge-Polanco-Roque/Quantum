@@ -52,7 +52,8 @@ quantum/
 │   ├── portfolio_builder.py        # PortfolioBuilderAgent (deterministic: selects tickers + method only)
 │   │                               #   LLM returns {tickers, method, reasoning} — NO weights
 │   │                               #   Exception: method="preset" includes user-specified weights
-│   │                               #   "0% en X" = exclude ticker (REGLA #3), never max=0 constraint
+│   │                               #   REGLA #2: rebalanceo usa SOLO tickers dados, nunca agrega extras
+│   │                               #   REGLA #3: "0% en X" = exclude ticker, never max=0 constraint
 │   │                               #   Uses BUILDER_TOOLS (3) — no access to optimization tools
 │   │                               #   Weight computation happens in dashboard callback
 │   └── chatbot.py                  # ChatbotAgent (conversational, InMemorySaver, portfolio context)
@@ -162,6 +163,8 @@ Uses `langgraph.prebuilt.create_react_agent` with `BUILDER_TOOLS` (3 tools) from
 - `fetch_and_analyze` — fetches data + returns summary stats (return, vol, correlation)
 
 The LLM has NO access to optimization tools — it only selects tickers and chooses a method.
+When the user provides a specific ticker list or portfolio, the agent uses ONLY those tickers
+— never adds extras. For rebalancing requests, it keeps the same tickers (minus exclusions).
 Returns `{tickers, method, reasoning}` (and `split` when method="split", `constraints` when
 user specifies min/max per ticker). Weight computation happens deterministically in the
 dashboard callback via `_compute_split_weights()`, engine optimizers (`risk_parity_portfolio`,
