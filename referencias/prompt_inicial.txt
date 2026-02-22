@@ -1,0 +1,8 @@
+1	Prompt: "Quant Portfolio Optimizer"
+	2	Misión: Actúa como Quant y EJECUTA código Python para optimizar las "Magnificent 7" usando 10,000 simulaciones de Monte Carlo (Risk-Free 4%).
+	3	Matemática: Encuentra el portafolio con el Max Sharpe Ratio. Calcula su Retorno Esperado, Volatilidad y VaR al 95%.
+	4	Visualización: Dibuja un "Dashboard Quant" (Dark Mode) con 3 cosas: La Frontera Eficiente resaltando el óptimo, un gráfico de barras con los pesos exactos y el resumen de métricas.
+
+Y puedes hacer ese dashboard interactivo para poder cambiar los pesos de cada acción o con algunos ajustes que consideres interesantes para editar?
+
+Toma de referencia lo que veas en la carpeta "referencias", y de allí crea algo nuevo. Utiliza el MCP Context7 para tener a la mano la documentación más reciente de los frameworks que requieras. Revisa si en el MCP mal-mcp-hub encuentras skills que te sean necesarios. Quiero que crees un Agentic Team para el desarrollo de esto. Haz una planeaciones muy detallada de lo que se requiere hacer antes de empezar a desarrollar (después actualizas el CLAUDE.md).

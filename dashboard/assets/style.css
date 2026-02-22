@@ -1,0 +1,583 @@
+/* Quant Portfolio Optimizer — Dark Mode Dashboard */
+
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap');
+
+/* ── Reset & Base ─────────────────────────────────────────────────── */
+* {
+    box-sizing: border-box;
+}
+
+body {
+    background-color: #0d1117 !important;
+    color: #e6edf3;
+    font-family: 'JetBrains Mono', monospace !important;
+    margin: 0;
+    padding: 0;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* ── Card Base ────────────────────────────────────────────────────── */
+.card {
+    background-color: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 16px;
+}
+
+/* ── Metric Cards ─────────────────────────────────────────────────── */
+.metric-card {
+    background-color: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 12px;
+    padding: 20px 16px;
+    position: relative;
+    text-align: center;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.metric-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.metric-card.sharpe {
+    border-top: 3px solid #00d4aa;
+}
+
+.metric-card.return {
+    border-top: 3px solid #f472b6;
+}
+
+.metric-card.volatility {
+    border-top: 3px solid #a78bfa;
+}
+
+.metric-card.var {
+    border-top: 3px solid #fb923c;
+}
+
+.metric-value {
+    font-size: 2.5rem;
+    font-weight: 700;
+    color: #e6edf3;
+    line-height: 1.2;
+    margin: 8px 0;
+}
+
+.metric-card.sharpe .metric-value { color: #00d4aa; }
+.metric-card.return .metric-value { color: #f472b6; }
+.metric-card.volatility .metric-value { color: #a78bfa; }
+.metric-card.var .metric-value { color: #fb923c; }
+
+.metric-label {
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: #8b949e;
+    font-size: 0.7rem;
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+.metric-subtitle {
+    color: #8b949e;
+    font-size: 0.65rem;
+    margin-top: 4px;
+}
+
+/* ── Buttons ──────────────────────────────────────────────────────── */
+.btn-ejecutar {
+    background-color: #00d4aa !important;
+    color: #0d1117 !important;
+    font-weight: 700;
+    text-transform: uppercase;
+    border-radius: 8px !important;
+    padding: 12px 32px !important;
+    border: none !important;
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 0.85rem;
+    letter-spacing: 1px;
+    cursor: pointer;
+    transition: background-color 0.2s ease, transform 0.1s ease;
+    width: 100%;
+}
+
+.btn-ejecutar:hover {
+    background-color: #00eabb !important;
+    transform: translateY(-1px);
+}
+
+.btn-optimo {
+    background-color: transparent !important;
+    border: 1px solid #a78bfa !important;
+    color: #a78bfa !important;
+    font-weight: 600;
+    text-transform: uppercase;
+    border-radius: 8px !important;
+    padding: 12px 32px !important;
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 0.85rem;
+    letter-spacing: 1px;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+    width: 100%;
+}
+
+.btn-optimo:hover {
+    background-color: rgba(167, 139, 250, 0.15) !important;
+}
+
+.btn-equal,
+.btn-random,
+.btn-normalize {
+    background-color: transparent !important;
+    border: 1px solid #30363d !important;
+    color: #8b949e !important;
+    font-weight: 500;
+    text-transform: uppercase;
+    border-radius: 6px !important;
+    padding: 6px 14px !important;
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 0.7rem;
+    letter-spacing: 1px;
+    cursor: pointer;
+    transition: border-color 0.2s ease, color 0.2s ease;
+}
+
+.btn-equal:hover,
+.btn-random:hover,
+.btn-normalize:hover {
+    border-color: #00d4aa !important;
+    color: #00d4aa !important;
+}
+
+/* ── Header ───────────────────────────────────────────────────────── */
+.header-title {
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: #e6edf3;
+    letter-spacing: 3px;
+    margin: 0;
+}
+
+.header-subtitle {
+    color: #8b949e;
+    font-size: 0.65rem;
+    letter-spacing: 2px;
+    margin-top: 4px;
+}
+
+.header-badge {
+    display: inline-block;
+    background-color: rgba(0, 212, 170, 0.12);
+    color: #00d4aa;
+    border: 1px solid rgba(0, 212, 170, 0.3);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 1px;
+    margin-right: 8px;
+}
+
+/* ── Section Titles ───────────────────────────────────────────────── */
+.section-title {
+    color: #8b949e;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    margin-bottom: 12px;
+}
+
+/* ── Slider Overrides ─────────────────────────────────────────────── */
+.rc-slider-track {
+    background-color: #00d4aa !important;
+}
+
+.rc-slider-handle {
+    border-color: #00d4aa !important;
+    background-color: #00d4aa !important;
+    box-shadow: 0 0 4px rgba(0, 212, 170, 0.5) !important;
+}
+
+.rc-slider-rail {
+    background-color: #30363d !important;
+}
+
+.rc-slider-dot-active {
+    border-color: #00d4aa !important;
+}
+
+/* ── Slider Row ───────────────────────────────────────────────────── */
+.slider-row {
+    display: flex;
+    align-items: center;
+    margin-bottom: 10px;
+    gap: 10px;
+}
+
+.slider-ticker-label {
+    min-width: 50px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 1px;
+}
+
+.slider-container {
+    flex: 1;
+}
+
+.slider-weight-display {
+    min-width: 55px;
+    text-align: right;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #00d4aa;
+}
+
+/* ── Lock Checkbox Override ───────────────────────────────────────── */
+.lock-checkbox .form-check-input {
+    background-color: #30363d;
+    border-color: #484f58;
+}
+
+.lock-checkbox .form-check-input:checked {
+    background-color: #fb923c;
+    border-color: #fb923c;
+}
+
+/* ── Total Bar ────────────────────────────────────────────────────── */
+.total-bar-container {
+    margin-top: 12px;
+    margin-bottom: 12px;
+}
+
+.total-bar-track {
+    height: 6px;
+    background-color: #30363d;
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.total-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #00d4aa, #58a6ff);
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+
+.total-bar-label {
+    font-size: 0.7rem;
+    color: #8b949e;
+    margin-top: 4px;
+    text-align: right;
+}
+
+/* ── Agent Panel ──────────────────────────────────────────────────── */
+.agent-panel {
+    background-color: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 12px;
+    padding: 20px;
+    max-height: 600px;
+    overflow-y: auto;
+}
+
+.agent-panel h1 {
+    color: #00d4aa;
+    font-size: 0.85rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    margin: 16px 0 10px 0;
+    padding-bottom: 6px;
+    border-bottom: 1px solid #30363d;
+}
+
+.agent-panel h2 {
+    color: #e6edf3;
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 1px;
+    margin: 14px 0 8px 0;
+}
+
+.agent-panel h3 {
+    color: #c9d1d9;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    margin: 10px 0 6px 0;
+}
+
+.agent-panel h4 {
+    color: #8b949e;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin: 8px 0 6px 0;
+}
+
+.agent-panel p {
+    font-size: 0.72rem;
+    line-height: 1.65;
+    color: #c9d1d9;
+    margin: 4px 0 8px 0;
+}
+
+.agent-panel li {
+    font-size: 0.72rem;
+    line-height: 1.55;
+    color: #c9d1d9;
+    margin-bottom: 3px;
+}
+
+.agent-panel ul,
+.agent-panel ol {
+    padding-left: 18px;
+    margin: 4px 0 8px 0;
+}
+
+.agent-panel strong {
+    color: #e6edf3;
+    font-weight: 600;
+}
+
+.agent-panel em {
+    color: #8b949e;
+}
+
+.agent-panel code {
+    color: #00d4aa;
+    background-color: rgba(0, 212, 170, 0.1);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.68rem;
+}
+
+.agent-panel blockquote {
+    border-left: 3px solid #00d4aa;
+    padding-left: 12px;
+    margin: 8px 0;
+    color: #8b949e;
+    font-size: 0.72rem;
+}
+
+.agent-panel hr {
+    border: none;
+    border-top: 1px solid #30363d;
+    margin: 12px 0;
+}
+
+/* ── Fundamental Analysis Markdown (inside sentiment panel) ──────── */
+#sentiment-output h1 {
+    color: #00d4aa;
+    font-size: 0.82rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    margin: 12px 0 8px 0;
+    padding-bottom: 5px;
+    border-bottom: 1px solid #30363d;
+}
+
+#sentiment-output h2 {
+    color: #e6edf3;
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    margin: 10px 0 6px 0;
+}
+
+#sentiment-output h3 {
+    color: #c9d1d9;
+    font-size: 0.73rem;
+    font-weight: 600;
+    margin: 8px 0 5px 0;
+}
+
+#sentiment-output h4 {
+    color: #8b949e;
+    font-size: 0.7rem;
+    font-weight: 600;
+    margin: 6px 0 4px 0;
+}
+
+#sentiment-output p {
+    font-size: 0.7rem;
+    line-height: 1.6;
+    color: #c9d1d9;
+    margin: 3px 0 6px 0;
+}
+
+#sentiment-output li {
+    font-size: 0.7rem;
+    line-height: 1.5;
+    color: #c9d1d9;
+    margin-bottom: 2px;
+}
+
+#sentiment-output ul,
+#sentiment-output ol {
+    padding-left: 16px;
+    margin: 3px 0 6px 0;
+}
+
+#sentiment-output strong {
+    color: #e6edf3;
+    font-weight: 600;
+}
+
+#sentiment-output blockquote {
+    border-left: 3px solid #00d4aa;
+    padding-left: 10px;
+    margin: 6px 0;
+    color: #8b949e;
+    font-size: 0.7rem;
+}
+
+#sentiment-output hr {
+    border: none;
+    border-top: 1px solid #30363d;
+    margin: 10px 0;
+}
+
+/* ── Input Overrides ──────────────────────────────────────────────── */
+.param-input input {
+    background-color: #0d1117 !important;
+    border: 1px solid #30363d !important;
+    color: #e6edf3 !important;
+    border-radius: 8px !important;
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 0.85rem !important;
+    padding: 8px 12px !important;
+    text-align: center;
+}
+
+.param-input input:focus {
+    border-color: #00d4aa !important;
+    box-shadow: 0 0 0 2px rgba(0, 212, 170, 0.2) !important;
+}
+
+.param-label {
+    color: #8b949e;
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 4px;
+}
+
+/* ── Graph containers ─────────────────────────────────────────────── */
+.graph-card {
+    background-color: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 12px;
+    padding: 12px;
+}
+
+/* ── Scrollbar ────────────────────────────────────────────────────── */
+::-webkit-scrollbar {
+    width: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: #0d1117;
+}
+
+::-webkit-scrollbar-thumb {
+    background-color: #30363d;
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background-color: #484f58;
+}
+
+/* ── NL Input Panel ──────────────────────────────────────────────── */
+.nl-input-panel {
+    position: relative;
+}
+
+.nl-textarea {
+    background-color: #0d1117 !important;
+    border: 1px solid #30363d !important;
+    color: #e6edf3 !important;
+    border-radius: 8px !important;
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 0.75rem !important;
+    padding: 10px 12px !important;
+    width: 100% !important;
+    resize: vertical;
+    min-height: 60px;
+    transition: border-color 0.2s ease;
+}
+
+.nl-textarea:focus {
+    border-color: #00d4aa !important;
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(0, 212, 170, 0.2) !important;
+}
+
+.nl-textarea::placeholder {
+    color: #484f58;
+    font-size: 0.7rem;
+}
+
+.btn-build {
+    background-color: #00d4aa !important;
+    color: #0d1117 !important;
+    font-weight: 700;
+    text-transform: uppercase;
+    border-radius: 8px !important;
+    padding: 10px 24px !important;
+    border: none !important;
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 0.75rem;
+    letter-spacing: 1px;
+    cursor: pointer;
+    transition: background-color 0.2s ease, transform 0.1s ease;
+    width: 100%;
+    margin-top: 8px;
+}
+
+.btn-build:hover {
+    background-color: #00eabb !important;
+    transform: translateY(-1px);
+}
+
+/* ── Ensemble Table Overrides ─────────────────────────────────────── */
+.dash-table-container .dash-spreadsheet-container .dash-spreadsheet-inner td,
+.dash-table-container .dash-spreadsheet-container .dash-spreadsheet-inner th {
+    font-family: 'JetBrains Mono', monospace !important;
+}
+
+/* ── Sentiment Items ─────────────────────────────────────────────── */
+.sentiment-item {
+    display: flex;
+    align-items: flex-start;
+    padding: 3px 0 3px 16px;
+    gap: 4px;
+}
+
+.sentiment-score-positive {
+    font-size: 0.7rem;
+    font-weight: 600;
+}
+
+.sentiment-score-negative {
+    font-size: 0.7rem;
+    font-weight: 600;
+}
+
+/* ── Responsive ───────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+    .metric-value {
+        font-size: 1.8rem;
+    }
+    .header-title {
+        font-size: 1.1rem;
+    }
+}

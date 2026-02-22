@@ -1,0 +1,21 @@
+# Quant Portfolio Optimizer — Dependencies
+
+# Data & Computation
+numpy>=1.24
+pandas>=2.0
+scipy>=1.11
+yfinance>=0.2.36
+
+# Dashboard
+dash>=2.14
+plotly>=5.18
+dash-bootstrap-components>=1.5
+
+# Multi-Agent System
+langgraph>=0.2
+langchain>=0.3
+langchain-openai>=0.2
+langchain-anthropic>=0.2
+
+# Environment
+python-dotenv>=1.0
