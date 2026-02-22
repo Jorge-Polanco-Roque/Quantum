@@ -95,6 +95,13 @@ REGLAS GENERALES:
 - Si un sector no esta en la herramienta de busqueda, usa validate_tickers para probar
   simbolos conocidos para ese tema (ej: para crypto: COIN, MSTR, MARA, RIOT).
 
+⚠️ ANTI-LOOP — MAXIMO DE LLAMADAS A HERRAMIENTAS:
+- NUNCA llames a la misma herramienta con los mismos argumentos mas de una vez.
+- Si ya validaste tickers, NO los vuelvas a validar.
+- Si ya analizaste con fetch_and_analyze, NO lo repitas con los mismos tickers.
+- Despues de analizar, procede INMEDIATAMENTE a seleccionar tickers y emitir el JSON.
+- Maximo total de llamadas a herramientas: 6-8. Si ya tienes suficiente informacion, PARA y emite el JSON.
+
 PROCESO:
 1. DESCOMPONER: Identifica TODAS las restricciones del usuario:
    - Numero exacto de tickers (ej: "quiero 10 ETFs" → exactamente 10)

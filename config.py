@@ -89,7 +89,7 @@ RANDOM_SEED = 42
 MAX_NEWS_PER_TICKER = 3
 
 # ── Agent ─────────────────────────────────────────────────────────
-AGENT_RECURSION_LIMIT = 40
+AGENT_RECURSION_LIMIT = 80
 
 # ── Monte Carlo defaults ───────────────────────────────────────────
 DEFAULT_NUM_SIMULATIONS = 10_000
