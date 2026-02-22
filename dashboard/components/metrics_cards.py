@@ -30,6 +30,7 @@ def create_metrics_cards():
                 ),
                 xs=6,
                 md=3,
+                className="d-flex",
             ),
             dbc.Col(
                 _metric_card(
@@ -40,6 +41,7 @@ def create_metrics_cards():
                 ),
                 xs=6,
                 md=3,
+                className="d-flex",
             ),
             dbc.Col(
                 _metric_card(
@@ -50,6 +52,7 @@ def create_metrics_cards():
                 ),
                 xs=6,
                 md=3,
+                className="d-flex",
             ),
             dbc.Col(
                 _metric_card(
@@ -60,7 +63,8 @@ def create_metrics_cards():
                 ),
                 xs=6,
                 md=3,
+                className="d-flex",
             ),
         ],
-        className="g-2",
+        className="g-2 h-100",
     )

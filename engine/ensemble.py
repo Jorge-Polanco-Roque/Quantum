@@ -371,3 +371,102 @@ def ensemble_vote(
             "metrics": metrics_sharpe,
         },
     }
+
+
+def ensemble_shrinkage(
+    method_results: dict,
+    mean_returns: np.ndarray,
+    cov_matrix: np.ndarray,
+    rf: float = DEFAULT_RISK_FREE_RATE,
+    var_conf: float = DEFAULT_VAR_CONFIDENCE,
+    delta_min: float = 0.3,
+    delta_max: float = 0.7,
+) -> dict:
+    """Combine Sharpe-weighted ensemble with 1/N using adaptive shrinkage.
+
+    The shrinkage coefficient delta is computed from the HHI (Herfindahl-
+    Hirschman Index) of the Sharpe weights across the 7 methods:
+
+        w_final = delta * w_sharpe_weighted + (1 - delta) * w_equal
+
+    where delta is inversely proportional to HHI concentration:
+      - Low HHI  (methods contribute equally) -> high delta -> trust ensemble
+      - High HHI (one method dominates)       -> low delta  -> anchor to 1/N
+
+    Returns dict with key ``"shrinkage_ensemble"`` containing weights, metrics,
+    and the computed delta.
+    """
+    n = len(mean_returns)
+    w_equal = np.ones(n) / n
+
+    # Collect valid Sharpe ratios and weight vectors
+    valid_weights = []
+    sharpe_values = []
+
+    for key, result in method_results.items():
+        w = result.get("weights", [])
+        if len(w) > 0 and "error" not in result:
+            valid_weights.append(np.array(w))
+            sharpe_values.append(result["metrics"]["sharpe_ratio"])
+
+    if not valid_weights:
+        # Fallback to equal weight
+        metrics_eq = calc_portfolio_metrics(w_equal, mean_returns, cov_matrix, rf, var_conf)
+        return {
+            "shrinkage_ensemble": {
+                "nombre": "Ensemble (Shrinkage)",
+                "weights": w_equal.tolist(),
+                "metrics": metrics_eq,
+                "delta": 0.0,
+            }
+        }
+
+    weights_matrix = np.array(valid_weights)
+    sharpe_arr = np.array(sharpe_values)
+
+    # Sharpe-weighted average (only positive Sharpe values contribute)
+    sharpe_pos = np.maximum(sharpe_arr, 0.0)
+    sharpe_sum = sharpe_pos.sum()
+
+    if sharpe_sum > 0:
+        sharpe_weights_norm = sharpe_pos / sharpe_sum
+        w_sharpe_weighted = weights_matrix.T @ sharpe_weights_norm
+    else:
+        # All methods have non-positive Sharpe — fall back to simple average
+        w_sharpe_weighted = weights_matrix.mean(axis=0)
+        sharpe_weights_norm = np.ones(len(sharpe_values)) / len(sharpe_values)
+
+    # Normalize Sharpe-weighted portfolio
+    sw_sum = w_sharpe_weighted.sum()
+    if sw_sum > 0:
+        w_sharpe_weighted = w_sharpe_weighted / sw_sum
+
+    # Compute adaptive delta from HHI of Sharpe weights
+    num_methods = len(sharpe_weights_norm)
+    hhi = float(np.sum(sharpe_weights_norm ** 2))
+    hhi_min = 1.0 / num_methods  # perfect dispersion
+    hhi_norm = (hhi - hhi_min) / (1.0 - hhi_min) if num_methods > 1 else 1.0
+    hhi_norm = np.clip(hhi_norm, 0.0, 1.0)
+
+    # Delta inversely proportional to concentration
+    delta = delta_max - (delta_max - delta_min) * hhi_norm
+
+    # Final shrinkage blend
+    w_final = delta * w_sharpe_weighted + (1.0 - delta) * w_equal
+
+    # Ensure valid weights
+    w_final = np.clip(w_final, 0.0, 1.0)
+    wf_sum = w_final.sum()
+    if wf_sum > 0:
+        w_final = w_final / wf_sum
+
+    metrics = calc_portfolio_metrics(w_final, mean_returns, cov_matrix, rf, var_conf)
+
+    return {
+        "shrinkage_ensemble": {
+            "nombre": "Ensemble (Shrinkage)",
+            "weights": w_final.tolist(),
+            "metrics": metrics,
+            "delta": round(float(delta), 4),
+        }
+    }

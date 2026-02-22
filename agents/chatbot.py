@@ -137,9 +137,27 @@ class ChatbotAgent:
             if var is not None:
                 lines.append(f"VaR diario: {var*100:.2f}%")
 
-        # Ensemble summary
+        # Ensemble — full detail: weights per ticker + metrics per method
         ensemble = ctx.get("ensemble", {})
-        if ensemble:
+        if ensemble and tickers:
+            lines.append("Resultados del ensemble (pesos % por ticker y metricas por metodo):")
+            for key, data in ensemble.items():
+                name = data.get("nombre", key)
+                m = data.get("metrics", {})
+                w = data.get("weights", [])
+                sr = m.get("sharpe_ratio", "N/A")
+                ret = m.get("expected_return")
+                vol = m.get("volatility")
+                met_parts = [f"Sharpe={sr}"]
+                if ret is not None:
+                    met_parts.append(f"Ret={ret*100:.2f}%")
+                if vol is not None:
+                    met_parts.append(f"Vol={vol*100:.2f}%")
+                lines.append(f"  {name} ({', '.join(met_parts)}):")
+                if w and len(w) == len(tickers):
+                    for t, wi in zip(tickers, w):
+                        lines.append(f"    {t}: {wi*100:.1f}%")
+        elif ensemble:
             lines.append("Metodos del ensemble:")
             for key, data in ensemble.items():
                 name = data.get("nombre", key)

@@ -105,6 +105,10 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 MAX_DEBATE_ROUNDS = 2
 
+# ── Ensemble shrinkage ────────────────────────────────────────────
+ENSEMBLE_DELTA_MIN = 0.3   # δ minimo (maximo ancla a 1/N)
+ENSEMBLE_DELTA_MAX = 0.7   # δ maximo (maximo confianza en Sharpe-weighted)
+
 # ── Dashboard settings ─────────────────────────────────────────────
 DASH_DEBUG = os.getenv("DASH_DEBUG", "true").lower() == "true"
 DASH_PORT = int(os.getenv("DASH_PORT", "8050"))

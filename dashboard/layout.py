@@ -65,9 +65,9 @@ def _dashboard_content():
                 children=[
                     dbc.Row(
                         [
-                            dbc.Col(create_nl_input_panel(), xs=12, md=4),
-                            dbc.Col(create_parameters_panel(), xs=12, md=3),
-                            dbc.Col(create_metrics_cards(), xs=12, md=5),
+                            dbc.Col(create_nl_input_panel(), xs=12, md=4, className="d-flex"),
+                            dbc.Col(create_parameters_panel(), xs=12, md=3, className="d-flex"),
+                            dbc.Col(create_metrics_cards(), xs=12, md=5, className="d-flex"),
                         ],
                         className="g-2",
                     ),

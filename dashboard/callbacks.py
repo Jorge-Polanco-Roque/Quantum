@@ -35,6 +35,7 @@ from engine import (
     calc_risk_contribution,
     run_all_methods,
     ensemble_vote,
+    ensemble_shrinkage,
     fetch_all_news,
 )
 from dashboard.components.frontier_chart import create_frontier_figure
@@ -157,6 +158,9 @@ def _run_full_pipeline(tickers, rf, num_sims, var_conf, preset_weights=None,
     # Monte Carlo simulation
     mc = run_monte_carlo(mean_ret, cov_mat, num_sims=num_sims, risk_free_rate=rf)
 
+    # Run all 7 methods ONCE (reused for ensemble vote and ensemble shrinkage)
+    all_methods = run_all_methods(mean_ret, cov_mat, rf, var_conf)
+
     # Optimal weights — determined by preset_weights or method
     if preset_weights is not None:
         raw = np.array([preset_weights.get(t, 0.0) for t in available_tickers])
@@ -165,6 +169,13 @@ def _run_full_pipeline(tickers, rf, num_sims, var_conf, preset_weights=None,
             opt_weights = raw / w_sum
         else:
             opt_weights = optimize_max_sharpe(mean_ret, cov_mat, risk_free_rate=rf)
+    elif method == "ensemble":
+        shrink = ensemble_shrinkage(
+            all_methods, mean_ret, cov_mat, rf, var_conf,
+            delta_min=cfg.ENSEMBLE_DELTA_MIN,
+            delta_max=cfg.ENSEMBLE_DELTA_MAX,
+        )
+        opt_weights = np.array(shrink["shrinkage_ensemble"]["weights"])
     elif method == "risk_parity":
         opt_weights = risk_parity_portfolio(mean_ret, cov_mat, rf)
     elif method == "min_variance":
@@ -192,10 +203,15 @@ def _run_full_pipeline(tickers, rf, num_sims, var_conf, preset_weights=None,
         rf, optimal_info["return"], optimal_info["volatility"], max_vol
     )
 
-    # Ensemble methods
-    all_methods = run_all_methods(mean_ret, cov_mat, rf, var_conf)
+    # Ensemble vote (reuses all_methods already computed above)
     ensemble_results = ensemble_vote(all_methods, mean_ret, cov_mat, rf, var_conf)
-    combined_ensemble = {**all_methods, **ensemble_results}
+    # Add shrinkage ensemble to the table
+    shrink_result = ensemble_shrinkage(
+        all_methods, mean_ret, cov_mat, rf, var_conf,
+        delta_min=cfg.ENSEMBLE_DELTA_MIN,
+        delta_max=cfg.ENSEMBLE_DELTA_MAX,
+    )
+    combined_ensemble = {**all_methods, **ensemble_results, **shrink_result}
 
     # Risk contribution
     risk_contrib = calc_risk_contribution(opt_weights, cov_mat)
@@ -767,17 +783,25 @@ def register_callbacks(app):
 
         # Parse agent result — deterministic weight computation
         new_tickers = result.get("tickers", [])
-        method = result.get("method", "optimize")
+        method = result.get("method", "ensemble")
         split_data = result.get("split", None)
         reasoning = result.get("reasoning", "Portafolio construido exitosamente.")
 
         # Compute weights deterministically based on method
-        if method == "split" and split_data:
+        if method == "preset" and result.get("weights"):
+            # User gave exact percentages — use them directly
+            raw_weights = result["weights"]
+            weight_map = {t: float(raw_weights.get(t, 0)) for t in new_tickers}
+            # Normalize in case they don't sum to 1
+            w_sum = sum(weight_map.values())
+            if w_sum > 0:
+                weight_map = {t: w / w_sum for t, w in weight_map.items()}
+        elif method == "split" and split_data:
             weight_map = _compute_split_weights(new_tickers, split_data)
         elif method == "equal_weight":
             eq = 1.0 / len(new_tickers) if new_tickers else 0
             weight_map = {t: eq for t in new_tickers}
-        elif method in ("risk_parity", "min_variance"):
+        elif method in ("risk_parity", "min_variance", "ensemble"):
             # Pipeline will compute via the corresponding engine method
             weight_map = None
         else:
@@ -808,6 +832,8 @@ def register_callbacks(app):
 
         # Determine weight method label
         METHOD_LABELS = {
+            "preset": "Pesos del usuario",
+            "ensemble": "Ensemble Shrinkage (δ adaptativo)",
             "optimize": "SLSQP Max Sharpe",
             "equal_weight": "Pesos Iguales (1/N)",
             "risk_parity": "Paridad de Riesgo",
@@ -868,7 +894,7 @@ def register_callbacks(app):
             pipeline_result[18],         # store-prices-data
         ]
 
-    # ── Callback: Sentiment / News + Fundamental Analysis ───────────
+    # ── Callback: Sentiment / News + Fundamental Analysis (manual) ──
     @app.callback(
         Output("sentiment-output", "children"),
         Input("btn-refresh-news", "n_clicks"),
@@ -885,153 +911,25 @@ def register_callbacks(app):
     def refresh_news(n_clicks, tickers, opt_data, stats_data, ensemble_data, rf_pct, var_level_pct):
         if not n_clicks:
             return no_update
+        return _build_sentiment_output(tickers, opt_data, stats_data, ensemble_data, rf_pct, var_level_pct)
 
-        tickers = tickers or TICKERS
-
-        try:
-            sentiment_data = fetch_all_news(tickers, max_per_ticker=cfg.MAX_NEWS_PER_TICKER)
-        except Exception as exc:
-            return html.Div(
-                f"Error obteniendo noticias: {exc}",
-                style={"color": "#fb923c", "fontSize": "0.75rem"},
-            )
-
-        # Build formatted news output
-        children = []
-        score_general = sentiment_data.get("score_general", 0)
-
-        # General score header
-        if score_general > 0.1:
-            general_color = "#00d4aa"
-            general_label = "POSITIVO"
-        elif score_general < -0.1:
-            general_color = "#f87171"
-            general_label = "NEGATIVO"
-        else:
-            general_color = "#fbbf24"
-            general_label = "NEUTRAL"
-
-        children.append(
-            html.Div(
-                style={"display": "flex", "alignItems": "center", "gap": "12px", "marginBottom": "16px"},
-                children=[
-                    html.Span(
-                        f"Sentimiento General: {general_label}",
-                        style={"color": general_color, "fontSize": "0.8rem", "fontWeight": "700"},
-                    ),
-                    html.Span(
-                        f"({score_general:+.3f})",
-                        style={"color": general_color, "fontSize": "0.75rem"},
-                    ),
-                ],
-            )
-        )
-
-        # Per-ticker news
-        for ticker in tickers:
-            ticker_data = sentiment_data.get("por_ticker", {}).get(ticker, {})
-            avg_score = ticker_data.get("score_promedio", 0)
-            noticias = ticker_data.get("noticias", [])
-
-            score_color = "#00d4aa" if avg_score > 0.05 else "#f87171" if avg_score < -0.05 else "#fbbf24"
-
-            ticker_header = html.Div(
-                style={"display": "flex", "alignItems": "center", "gap": "8px", "marginTop": "10px"},
-                children=[
-                    html.Span(
-                        ticker,
-                        style={
-                            "color": get_ticker_color(ticker),
-                            "fontWeight": "700",
-                            "fontSize": "0.75rem",
-                        },
-                    ),
-                    html.Span(
-                        f"{avg_score:+.2f}",
-                        className="sentiment-score-positive" if avg_score >= 0 else "sentiment-score-negative",
-                        style={"color": score_color},
-                    ),
-                ],
-            )
-            children.append(ticker_header)
-
-            for noticia in noticias:
-                s = noticia.get("score", 0)
-                s_color = "#00d4aa" if s > 0 else "#f87171" if s < 0 else "#8b949e"
-                children.append(
-                    html.Div(
-                        className="sentiment-item",
-                        children=[
-                            html.Span(
-                                f"[{s:+.1f}]",
-                                style={"color": s_color, "fontSize": "0.65rem", "minWidth": "40px"},
-                            ),
-                            html.Span(
-                                noticia.get("title", "")[:80],
-                                style={"color": "#c9d1d9", "fontSize": "0.7rem", "marginLeft": "6px"},
-                            ),
-                        ],
-                    )
-                )
-
-        # Run fundamental analysis agent if portfolio data is available
-        if opt_data and stats_data:
-            stats_tickers = stats_data.get("tickers", tickers)
-            opt_weights = np.array(opt_data.get("weights", []))
-            mean_ret = np.array(stats_data["mean_returns"])
-            cov_mat = np.array(stats_data["cov_matrix"])
-            rf = (rf_pct or 4) / 100.0
-            var_conf = (var_level_pct or 95) / 100.0
-
-            metrics = calc_portfolio_metrics(opt_weights, mean_ret, cov_mat, rf, var_conf)
-            portfolio_data = {
-                "weights": {t: float(w) for t, w in zip(stats_tickers, opt_weights)},
-                "tickers": stats_tickers,
-                "expected_return": metrics["expected_return"],
-                "volatility": metrics["volatility"],
-                "sharpe_ratio": metrics["sharpe_ratio"],
-                "var": metrics["var"],
-            }
-
-            try:
-                from agents.fundamental_analyst import run_fundamental_analysis
-                analysis = run_fundamental_analysis(
-                    portfolio_data, sentiment_data, ensemble_data
-                )
-            except Exception as exc:
-                analysis = f"_Error en analisis fundamental: {exc}_"
-
-            # Separator + fundamental analysis
-            children.append(
-                html.Hr(style={"borderColor": "#30363d", "margin": "16px 0"})
-            )
-            children.append(
-                html.Div(
-                    "ANALISIS FUNDAMENTAL AI",
-                    style={
-                        "color": "#00d4aa",
-                        "fontSize": "0.75rem",
-                        "fontWeight": "700",
-                        "marginBottom": "8px",
-                    },
-                )
-            )
-            from dash import dcc
-            children.append(
-                dcc.Markdown(
-                    analysis,
-                    style={"color": "#c9d1d9", "fontSize": "0.75rem", "lineHeight": "1.6"},
-                )
-            )
-        else:
-            children.append(
-                html.Div(
-                    "Ejecuta la simulacion primero para obtener el analisis fundamental AI.",
-                    style={"color": "#8b949e", "fontSize": "0.7rem", "marginTop": "12px"},
-                )
-            )
-
-        return html.Div(children)
+    # ── Callback: Sentiment auto-trigger on portfolio generation ────
+    @app.callback(
+        Output("sentiment-output", "children", allow_duplicate=True),
+        Input("store-optimal-weights", "data"),
+        [
+            State("store-tickers", "data"),
+            State("store-annual-stats", "data"),
+            State("store-ensemble-results", "data"),
+            State("input-rf", "value"),
+            State("input-var-level", "value"),
+        ],
+        prevent_initial_call=True,
+    )
+    def auto_refresh_news(opt_data, tickers, stats_data, ensemble_data, rf_pct, var_level_pct):
+        if opt_data is None:
+            return no_update
+        return _build_sentiment_output(tickers, opt_data, stats_data, ensemble_data, rf_pct, var_level_pct)
 
     # ── Callback: Chat init (generate thread_id on page load) ───────
     @app.callback(
@@ -1099,6 +997,158 @@ def register_callbacks(app):
 
         history.append({"role": "assistant", "content": reply})
         return _build_chat_bubbles(history), "", history, ""
+
+
+def _build_sentiment_output(tickers, opt_data, stats_data, ensemble_data, rf_pct, var_level_pct):
+    """Fetch news, score sentiment, and optionally run fundamental analysis.
+
+    Shared by the manual button callback and the auto-trigger callback.
+    """
+    tickers = tickers or TICKERS
+
+    try:
+        sentiment_data = fetch_all_news(tickers, max_per_ticker=cfg.MAX_NEWS_PER_TICKER)
+    except Exception as exc:
+        return html.Div(
+            f"Error obteniendo noticias: {exc}",
+            style={"color": "#fb923c", "fontSize": "0.75rem"},
+        )
+
+    # Build formatted news output
+    children = []
+    score_general = sentiment_data.get("score_general", 0)
+
+    # General score header
+    if score_general > 0.1:
+        general_color = "#00d4aa"
+        general_label = "POSITIVO"
+    elif score_general < -0.1:
+        general_color = "#f87171"
+        general_label = "NEGATIVO"
+    else:
+        general_color = "#fbbf24"
+        general_label = "NEUTRAL"
+
+    children.append(
+        html.Div(
+            style={"display": "flex", "alignItems": "center", "gap": "12px", "marginBottom": "16px"},
+            children=[
+                html.Span(
+                    f"Sentimiento General: {general_label}",
+                    style={"color": general_color, "fontSize": "0.8rem", "fontWeight": "700"},
+                ),
+                html.Span(
+                    f"({score_general:+.3f})",
+                    style={"color": general_color, "fontSize": "0.75rem"},
+                ),
+            ],
+        )
+    )
+
+    # Per-ticker news
+    for ticker in tickers:
+        ticker_data = sentiment_data.get("por_ticker", {}).get(ticker, {})
+        avg_score = ticker_data.get("score_promedio", 0)
+        noticias = ticker_data.get("noticias", [])
+
+        score_color = "#00d4aa" if avg_score > 0.05 else "#f87171" if avg_score < -0.05 else "#fbbf24"
+
+        ticker_header = html.Div(
+            style={"display": "flex", "alignItems": "center", "gap": "8px", "marginTop": "10px"},
+            children=[
+                html.Span(
+                    ticker,
+                    style={
+                        "color": get_ticker_color(ticker),
+                        "fontWeight": "700",
+                        "fontSize": "0.75rem",
+                    },
+                ),
+                html.Span(
+                    f"{avg_score:+.2f}",
+                    className="sentiment-score-positive" if avg_score >= 0 else "sentiment-score-negative",
+                    style={"color": score_color},
+                ),
+            ],
+        )
+        children.append(ticker_header)
+
+        for noticia in noticias:
+            s = noticia.get("score", 0)
+            s_color = "#00d4aa" if s > 0 else "#f87171" if s < 0 else "#8b949e"
+            children.append(
+                html.Div(
+                    className="sentiment-item",
+                    children=[
+                        html.Span(
+                            f"[{s:+.1f}]",
+                            style={"color": s_color, "fontSize": "0.65rem", "minWidth": "40px"},
+                        ),
+                        html.Span(
+                            noticia.get("title", "")[:80],
+                            style={"color": "#c9d1d9", "fontSize": "0.7rem", "marginLeft": "6px"},
+                        ),
+                    ],
+                )
+            )
+
+    # Run fundamental analysis agent if portfolio data is available
+    if opt_data and stats_data:
+        stats_tickers = stats_data.get("tickers", tickers)
+        opt_weights = np.array(opt_data.get("weights", []))
+        mean_ret = np.array(stats_data["mean_returns"])
+        cov_mat = np.array(stats_data["cov_matrix"])
+        rf = (rf_pct or 4) / 100.0
+        var_conf = (var_level_pct or 95) / 100.0
+
+        metrics = calc_portfolio_metrics(opt_weights, mean_ret, cov_mat, rf, var_conf)
+        portfolio_data = {
+            "weights": {t: float(w) for t, w in zip(stats_tickers, opt_weights)},
+            "tickers": stats_tickers,
+            "expected_return": metrics["expected_return"],
+            "volatility": metrics["volatility"],
+            "sharpe_ratio": metrics["sharpe_ratio"],
+            "var": metrics["var"],
+        }
+
+        try:
+            from agents.fundamental_analyst import run_fundamental_analysis
+            analysis = run_fundamental_analysis(
+                portfolio_data, sentiment_data, ensemble_data
+            )
+        except Exception as exc:
+            analysis = f"_Error en analisis fundamental: {exc}_"
+
+        # Separator + fundamental analysis
+        children.append(
+            html.Hr(style={"borderColor": "#30363d", "margin": "16px 0"})
+        )
+        children.append(
+            html.Div(
+                "ANALISIS FUNDAMENTAL AI",
+                style={
+                    "color": "#00d4aa",
+                    "fontSize": "0.75rem",
+                    "fontWeight": "700",
+                    "marginBottom": "8px",
+                },
+            )
+        )
+        children.append(
+            dcc.Markdown(
+                analysis,
+                style={"color": "#c9d1d9", "fontSize": "0.75rem", "lineHeight": "1.6"},
+            )
+        )
+    else:
+        children.append(
+            html.Div(
+                "Ejecuta la simulacion primero para obtener el analisis fundamental AI.",
+                style={"color": "#8b949e", "fontSize": "0.7rem", "marginTop": "12px"},
+            )
+        )
+
+    return html.Div(children)
 
 
 def _build_chat_bubbles(history):
