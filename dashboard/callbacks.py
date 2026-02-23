@@ -105,6 +105,65 @@ def _compute_split_weights(tickers, split_data):
     return weight_map
 
 
+def _compute_split_weights_optimized(tickers, split_data, mean_ret, cov_mat, rf):
+    """Compute split weights using Max Sharpe within each group.
+
+    Falls back to equal weight within a group if optimization fails.
+    """
+    groups = split_data.get("groups", {})
+    weight_map = {}
+    assigned = set()
+    total_group_weight = 0.0
+
+    for _label, gdata in groups.items():
+        g_tickers = [t for t in gdata.get("tickers", []) if t in tickers]
+        g_weight = float(gdata.get("weight", 0))
+        if not g_tickers:
+            continue
+        total_group_weight += g_weight
+
+        if len(g_tickers) == 1:
+            weight_map[g_tickers[0]] = g_weight
+            assigned.add(g_tickers[0])
+            continue
+
+        # Extract sub-matrices for this group
+        indices = [tickers.index(t) for t in g_tickers]
+        sub_mean = mean_ret[indices]
+        sub_cov = cov_mat[np.ix_(indices, indices)]
+
+        # Optimize within group (Max Sharpe SLSQP)
+        try:
+            sub_weights = optimize_max_sharpe(sub_mean, sub_cov, risk_free_rate=rf)
+        except Exception:
+            sub_weights = np.ones(len(g_tickers)) / len(g_tickers)
+
+        # Scale by group proportion
+        for i, t in enumerate(g_tickers):
+            weight_map[t] = sub_weights[i] * g_weight
+            assigned.add(t)
+
+    # Residual tickers
+    residual = [t for t in tickers if t not in assigned]
+    residual_weight = max(1.0 - total_group_weight, 0.0)
+    if residual and residual_weight > 0:
+        per_r = residual_weight / len(residual)
+        for t in residual:
+            weight_map[t] = per_r
+    for t in tickers:
+        weight_map.setdefault(t, 0.0)
+
+    # Normalize
+    w_sum = sum(weight_map.values())
+    if w_sum > 0:
+        weight_map = {t: w / w_sum for t, w in weight_map.items()}
+    else:
+        eq = 1.0 / len(tickers)
+        weight_map = {t: eq for t in tickers}
+
+    return weight_map
+
+
 def _build_bounds_from_constraints(tickers, constraints):
     """Convert a constraints dict to an SLSQP-compatible bounds list.
 
@@ -180,7 +239,7 @@ def _apply_weight_floor(weight_map, min_floor=0.02, constraints=None):
 
 
 def _run_full_pipeline(tickers, rf, num_sims, var_conf, preset_weights=None,
-                       method="optimize", constraints=None):
+                       method="optimize", constraints=None, split_data=None):
     """Run the full MC + optimization + ensemble pipeline.
 
     *preset_weights*: ``{ticker: weight}`` dict — when provided the pipeline
@@ -193,6 +252,10 @@ def _run_full_pipeline(tickers, rf, num_sims, var_conf, preset_weights=None,
     *constraints*: optional ``{ticker: {"min": lo, "max": hi}, ...}`` dict.
     Converted to per-asset bounds and forwarded to all optimizers.
 
+    *split_data*: optional split group specification.  When provided (and
+    ``preset_weights`` is ``None``), sub-optimizes within each group using
+    Max Sharpe SLSQP, then scales by group proportions.
+
     Returns a tuple with all outputs needed by CB1 and CB8.
     """
     from engine.ensemble import risk_parity_portfolio, min_variance_portfolio
@@ -203,6 +266,12 @@ def _run_full_pipeline(tickers, rf, num_sims, var_conf, preset_weights=None,
     returns = compute_returns(prices)
     mean_ret, cov_mat = get_annual_stats(returns)
     n = len(available_tickers)
+
+    # If split_data provided, optimize within each group
+    if split_data is not None and preset_weights is None:
+        preset_weights = _compute_split_weights_optimized(
+            available_tickers, split_data, mean_ret, cov_mat, rf
+        )
 
     # Build per-asset bounds from user constraints (None if no constraints)
     bounds = _build_bounds_from_constraints(available_tickers, constraints)
@@ -891,7 +960,7 @@ def register_callbacks(app):
             if w_sum > 0:
                 weight_map = {t: w / w_sum for t, w in weight_map.items()}
         elif method == "split" and split_data:
-            weight_map = _compute_split_weights(new_tickers, split_data)
+            weight_map = None  # Pipeline optimizes within groups
         elif method == "equal_weight":
             eq = 1.0 / len(new_tickers) if new_tickers else 0
             weight_map = {t: eq for t in new_tickers}
@@ -912,7 +981,7 @@ def register_callbacks(app):
             pipeline_result = _run_full_pipeline(
                 new_tickers, rf, num_sims, var_conf,
                 preset_weights=weight_map, method=method,
-                constraints=constraints,
+                constraints=constraints, split_data=split_data,
             )
         except Exception as exc:
             return [no_update] * 2 + [
@@ -933,7 +1002,7 @@ def register_callbacks(app):
             "equal_weight": "Pesos Iguales (1/N)",
             "risk_parity": "Paridad de Riesgo",
             "min_variance": "Minima Varianza",
-            "split": "Split deterministico",
+            "split": "Split optimizado (Max Sharpe por grupo)",
         }
         peso_method = METHOD_LABELS.get(method, method)
 

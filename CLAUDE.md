@@ -84,7 +84,9 @@ quantum/
 │   │                               #   chat-init, chat-send (enriched context + action output),
 │   │                               #   execute-chat-action (runs pipeline from chatbot actions)
 │   │                               #   Helpers: _compute_position_styles(pos) → 3 style dicts
-│   │                               #   _compute_split_weights(tickers, split_data) → deterministic split
+│   │                               #   _compute_split_weights(tickers, split_data) → equal-weight split (fallback)
+│   │                               #   _compute_split_weights_optimized(tickers, split_data, mean_ret, cov_mat, rf)
+│   │                               #     → Max Sharpe SLSQP within each group (used by pipeline)
 │   │                               #   _build_bounds_from_constraints(tickers, constraints) → SLSQP bounds
 │   │                               #   _apply_weight_floor(weight_map, min_floor, constraints) → floor+constraints
 │   │                               #   _build_sentiment_output() → returns (html, sentiment_store) tuple
@@ -139,7 +141,7 @@ quantum/
 2. **Slider changes** → `risk.py` recalculates metrics in real-time → updates metric cards
 3. **Sentimiento + Fundamental (auto-triggered + manual)** → fires automatically when `store-optimal-weights` changes (also available via ACTUALIZAR NOTICIAS button) → `engine/sentiment.py` fetches yfinance news → keyword scoring → **`agents/fundamental_analyst.py`** combines quant metrics + news into a ponderacion cuantitativo-fundamental → renders per-ticker sentiment + AI fundamental analysis
 4. **Analisis AI (auto-triggered)** → fires automatically when `store-optimal-weights` changes (from EJECUTAR or NL Builder) → `agents/graph.py` runs LangGraph workflow with ensemble + sentiment data: Quant Analyst → Risk Analyst ↔ Market Analyst (debate) → Portfolio Advisor → displays recommendation. Also available as manual re-run via button.
-5. **CONSTRUIR PORTAFOLIO** → `agents/portfolio_builder.py` runs ReAct agent with BUILDER_TOOLS (3): interprets NL prompt → selects tickers → validates → returns `{tickers, method, reasoning}` (NO weights, except `"preset"`). Optionally returns `"constraints"` with per-ticker min/max bounds (e.g. `{"NVDA": {"min": 0.10}, "_all": {"max": 0.25}}`). Callback computes weights deterministicaly: `method="preset"` → user-specified percentages passed through, `"ensemble"` → ensemble shrinkage (default), `"optimize"` → SLSQP, `"equal_weight"` → 1/N, `"risk_parity"` → engine risk parity, `"min_variance"` → engine min variance, `"split"` → `_compute_split_weights()`. Constraints are converted to SLSQP bounds via `_build_bounds_from_constraints()` and passed to all optimizers + ensemble. Then `_run_full_pipeline(preset_weights=weight_map, method=method, constraints=constraints)` → `_apply_weight_floor(constraints=constraints)` ensures min 2% per ticker AND respects user constraints → updates `store-tickers` + runs full pipeline (MC + ensemble + all charts) → **auto-triggers AI Analysis** (see #4) + **auto-triggers Sentiment** (see #3). Same prompt always produces identical weights.
+5. **CONSTRUIR PORTAFOLIO** → `agents/portfolio_builder.py` runs ReAct agent with BUILDER_TOOLS (3): interprets NL prompt → selects tickers → validates → returns `{tickers, method, reasoning}` (NO weights, except `"preset"`). Optionally returns `"constraints"` with per-ticker min/max bounds (e.g. `{"NVDA": {"min": 0.10}, "_all": {"max": 0.25}}`). Callback computes weights deterministicaly: `method="preset"` → user-specified percentages passed through, `"ensemble"` → ensemble shrinkage (default), `"optimize"` → SLSQP, `"equal_weight"` → 1/N, `"risk_parity"` → engine risk parity, `"min_variance"` → engine min variance, `"split"` → `_compute_split_weights_optimized()` (Max Sharpe SLSQP within each group, falls back to equal weight). Constraints are converted to SLSQP bounds via `_build_bounds_from_constraints()` and passed to all optimizers + ensemble. Then `_run_full_pipeline(preset_weights=weight_map, method=method, constraints=constraints, split_data=split_data)` → `_apply_weight_floor(constraints=constraints)` ensures min 2% per ticker AND respects user constraints → updates `store-tickers` + runs full pipeline (MC + ensemble + all charts) → **auto-triggers AI Analysis** (see #4) + **auto-triggers Sentiment** (see #3). Same prompt always produces identical weights.
 6. **Chatbot v2** → always-visible sidebar (1/4, repositionable via toggle buttons) → user types question → callback reads all portfolio stores **+ parameter values + sentiment + MC + prices** → `_build_portfolio_context(+sentiment_data, mc_data, prices_data)` builds **enriched** context dict with parameters, tickers, weights, metrics, ensemble, correlation matrix, risk contribution, sentiment detailed, drawdown, historical performance, MC distribution → `_get_chatbot()` returns cached `ChatbotAgent` → `.chat()` with `CHATBOT_TOOLS` (search, validate, analyze) + InMemorySaver → returns `{"response": str, "action": dict|None}`. If action present → stored in `store-chat-action` → `execute_chat_action` callback picks it up and runs `_run_full_pipeline()` with appropriate params → full dashboard update.
 7. **Chat position toggle** → click ◀▲▼▶ buttons → `switch_chat_position` callback updates inline styles on `#app-layout`, `#dashboard-main`, `#chat-sidebar` via `_compute_position_styles(pos)` → CSS `flex-direction` + `order` switch without DOM rebuild → chat history and all stores preserved.
 
@@ -179,7 +181,8 @@ When the user provides a specific ticker list or portfolio, the agent uses ONLY 
 — never adds extras. For rebalancing requests, it keeps the same tickers (minus exclusions).
 Returns `{tickers, method, reasoning}` (and `split` when method="split", `constraints` when
 user specifies min/max per ticker). Weight computation happens deterministically in the
-dashboard callback via `_compute_split_weights()`, engine optimizers (`risk_parity_portfolio`,
+dashboard callback via `_compute_split_weights_optimized()` (Max Sharpe SLSQP within each
+group, with equal-weight fallback), engine optimizers (`risk_parity_portfolio`,
 `min_variance_portfolio`, `optimize_max_sharpe`), or equal weight. User constraints are
 converted to SLSQP bounds via `_build_bounds_from_constraints()` and forwarded to all
 optimizers + ensemble methods. `_apply_weight_floor(constraints=constraints)` ensures every
@@ -187,7 +190,7 @@ ticker gets >= 2% AND respects user min/max constraints. The `"_all"` key applie
 bounds to all tickers; individual ticker constraints override `"_all"`.
 
 Methods: `"preset"` (user-specified exact percentages per ticker), `"ensemble"` (ensemble shrinkage with adaptive delta, default),
-`"optimize"` (SLSQP Max Sharpe), `"equal_weight"` (1/N), `"risk_parity"`, `"min_variance"`, `"split"` (with groups specification).
+`"optimize"` (SLSQP Max Sharpe), `"equal_weight"` (1/N), `"risk_parity"`, `"min_variance"`, `"split"` (Max Sharpe SLSQP within each group).
 
 Constraints: Any method can include `"constraints"` with per-ticker bounds: `{"AAPL": {"min": 0.05, "max": 0.30}, "_all": {"max": 0.25}}`.
 The system distinguishes between preset (exact weights), constraints (bounds for optimization), and exclusions ("0% en X" = ticker omitted from list entirely).
@@ -237,6 +240,9 @@ Dashboard integration: always-visible sidebar (`chat_widget.py`, 300px fixed, dy
 - **ETFs pais/region**: etf_mexico, etf_brasil, etf_china, etf_emergentes, etf_europa, etf_japon, etf_global, etf_india, etf_korea, etf_canada, etf_australia, etf_uk, etf_germany, etf_southeast_asia, etf_africa, etf_middle_east, etf_frontier, etf_latam
 - **UCITS** (15+ categories): ucits/ucits_equity (15 tickers), ucits_bonos (8), ucits_esg, ucits_small_cap, ucits_emerging, ucits_usa, ucits_europe, ucits_japan, ucits_pacific, ucits_dividendos, ucits_oro, ucits_commodities
 - **SIC Mexico**: sic/sic_mexico — ~31 ETFs extranjeros disponibles en el Sistema Internacional de Cotizaciones
+  - **SIC Preference**: NL Builder prompt includes a PREFERENCIA SIC rule — for diversified ETF
+    portfolios (wealth management, largo plazo, global), the builder searches SIC first to ensure
+    assets are purchasable from Mexican platforms. Only applies to ETFs, not individual stocks.
 - **Fondos Mexico**: fondos_mexico/fondos_inversion, fondos_blackrock/blackrock_mexico, fondos_gbm
 
 ### TICKER_ALIASES (agents/tools.py)

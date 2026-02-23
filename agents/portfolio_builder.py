@@ -274,6 +274,19 @@ UCITS Y SIC:
 - Si el usuario pide UCITS, prioriza tickers con sufijo .L
 - Si pide SIC, busca en "sic" que incluye ETFs populares US + algunos UCITS
 
+PREFERENCIA SIC (IMPORTANTE):
+- El usuario invierte desde Mexico. Cuando construyas portafolios diversificados con ETFs
+  internacionales, PREFIERE assets que estan listados en el SIC (Sistema Internacional de
+  Cotizaciones). Esto garantiza que el usuario pueda comprarlos desde una plataforma mexicana.
+- Para portafolios tipo "wealth management", "largo plazo", "diversificado global", o cuando
+  el usuario no especifique una region: busca primero en "sic" o "sic_mexico" para obtener
+  el pool de ETFs disponibles en el SIC, y complementa con otras categorias si es necesario.
+- Los tickers del SIC incluyen: ETFs de equity US (SPY, QQQ, VTI, VOO, ACWI), dividendos
+  (VYM, SCHD), renta fija (BND, AGG, TLT), commodities (GLD, IAU, SLV), y geograficos
+  (EWW, EWZ, EEM, VWO, VGK, EWJ).
+- Si el usuario pide acciones individuales (no ETFs), NO aplica esta preferencia — SIC es solo
+  para ETFs. Para acciones mexicanas usa "mexico" o "bmv".
+
 MANEJO DE PAISES Y REGIONES:
 - `search_tickers_by_sector` soporta busqueda por pais y region, no solo sectores.
 - Para empresas mexicanas usa: "mexico", "mexicanas", "mexico_esr", "mexico_ampliado",
