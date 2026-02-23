@@ -258,6 +258,8 @@ def _dashboard_content():
             dcc.Store(id="store-tickers", data=TICKERS),
             dcc.Store(id="store-ensemble-results"),
             dcc.Store(id="store-prices-data"),
+            dcc.Store(id="store-sentiment-data"),
+            dcc.Store(id="store-chat-action"),
         ],
     )
 

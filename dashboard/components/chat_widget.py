@@ -17,8 +17,9 @@ def create_chat_panel():
                     html.Div(
                         className="chat-header-controls",
                         children=[
-                            html.Span("CTX", className="chat-badge", title="Contexto del portafolio"),
+                            html.Span("CTX", className="chat-badge", title="Contexto enriquecido del portafolio"),
                             html.Span("MT", className="chat-badge", title="Multi-turn memory"),
+                            html.Span("TOOLS", className="chat-badge", title="Busqueda de tickers y sectores"),
                             html.Button(
                                 "\u25C0", id="chat-pos-left", n_clicks=0,
                                 className="chat-pos-btn",
@@ -51,14 +52,16 @@ def create_chat_panel():
                     html.Div(
                         className="chat-bubble chat-bubble-assistant",
                         children=dcc.Markdown(
-                            "Hola! Soy tu asistente financiero. "
+                            "Hola! Soy tu asistente financiero v2. "
                             "Ejecuta una simulacion y preguntame lo que quieras "
                             "sobre tu portafolio.\n\n"
                             "Puedo ayudarte con:\n"
-                            "- Explicar metricas (Sharpe, VaR, volatilidad)\n"
-                            "- Analizar la composicion del portafolio\n"
+                            "- Explicar metricas (Sharpe, VaR, volatilidad, drawdown)\n"
+                            "- Analizar correlacion, riesgo y sentimiento por activo\n"
                             "- Comparar metodos del ensemble\n"
-                            "- Conceptos financieros (frontera eficiente, HRP, CML)",
+                            "- Buscar tickers y sectores (ETFs, cripto, indices)\n"
+                            "- Modificar pesos: *\"Sube AAPL a 25%\"*\n"
+                            "- Agregar/eliminar activos: *\"Agrega BTC-USD\"*",
                             style={"margin": "0", "fontSize": "inherit", "lineHeight": "inherit"},
                         ),
                     ),

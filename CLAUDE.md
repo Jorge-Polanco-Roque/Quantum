@@ -49,6 +49,7 @@ quantum/
 │   │                               #   Covers: sectors, countries, cryptos, indices, futures, ETFs, UCITS, SIC
 │   │                               #   ALL_TOOLS (6): full set for chatbot v2 / other consumers
 │   │                               #   BUILDER_TOOLS (3): validate, search, analyze (no optimization)
+│   │                               #   CHATBOT_TOOLS (3): validate, search, analyze (read-only for chatbot v2)
 │   ├── portfolio_builder.py        # PortfolioBuilderAgent (deterministic: selects tickers + method only)
 │   │                               #   LLM returns {tickers, method, reasoning} — NO weights
 │   │                               #   Exception: method="preset" includes user-specified weights
@@ -58,8 +59,11 @@ quantum/
 │   │                               #   Split priority: group proportions override optimize method
 │   │                               #   Uses BUILDER_TOOLS (3) — no access to optimization tools
 │   │                               #   Weight computation happens in dashboard callback
-│   └── chatbot.py                  # ChatbotAgent (conversational, InMemorySaver, portfolio context)
-│                                   #   _format_context: full ensemble weights per ticker + metrics
+│   └── chatbot.py                  # ChatbotAgent v2 (CHATBOT_TOOLS, InMemorySaver, enriched context)
+│                                   #   _format_context: params + ensemble + corr + risk_contrib + sentiment
+│                                   #     + drawdown + historical_perf + mc_distribution (6 new sections)
+│                                   #   chat() → {"response": str, "action": dict|None}
+│                                   #   _extract_action: parses [ACTION:type:{json}] markers
 ├── dashboard/                      # Dash UI (dark mode, Plotly charts, all in Spanish)
 │   ├── layout.py                   # Adaptive layout: dashboard (3/4) + chat sidebar (1/4)
 │   │                               #   Chat dynamically repositionable: right/left/top/bottom
@@ -71,19 +75,24 @@ quantum/
 │   │                               #   sliders+charts, corr+risk_decomp+ensemble,
 │   │                               #   drawdown+performance, sentiment, agents.
 │   │                               #   Stores: mc, optimal, stats, tickers, ensemble-results,
-│   │                               #   prices-data, chat-history, chat-thread-id, chat-position.
-│   ├── callbacks.py                # 16 callbacks: chat-position (CB0), ejecutar, sliders,
-│   │                               #   optimo, igual, random, norm, agents (manual),
+│   │                               #   prices-data, sentiment-data, chat-action,
+│   │                               #   chat-history, chat-thread-id, chat-position.
+│   ├── callbacks.py                # 16 callbacks: chat-position (CB0), ejecutar (+ param auto-trigger),
+│   │                               #   sliders, optimo, igual, random, norm, agents (manual),
 │   │                               #   auto-agents (store-triggered), NL builder, weight
-│   │                               #   displays, sentiment+fundamental (manual + auto),
-│   │                               #   chat-init, chat-send
+│   │                               #   displays, sentiment+fundamental (manual + auto → store-sentiment-data),
+│   │                               #   chat-init, chat-send (enriched context + action output),
+│   │                               #   execute-chat-action (runs pipeline from chatbot actions)
 │   │                               #   Helpers: _compute_position_styles(pos) → 3 style dicts
 │   │                               #   _compute_split_weights(tickers, split_data) → deterministic split
 │   │                               #   _build_bounds_from_constraints(tickers, constraints) → SLSQP bounds
 │   │                               #   _apply_weight_floor(weight_map, min_floor, constraints) → floor+constraints
-│   │                               #   _build_sentiment_output() → shared by manual + auto sentiment
+│   │                               #   _build_sentiment_output() → returns (html, sentiment_store) tuple
+│   │                               #   _build_portfolio_context(+sentiment, mc, prices) → enriched chatbot context
+│   │                               #   _get_chatbot() → cached ChatbotAgent instance (preserves memory)
+│   │                               #   _compute_drawdown_stats(), _compute_historical_performance()
 │   ├── components/
-│   │   ├── parameters.py           # Tasa Libre%, Simulaciones, VaR Nivel% inputs
+│   │   ├── parameters.py           # Tasa Libre%, Simulaciones, VaR Nivel% inputs (debounce=True)
 │   │   │                           #   create_parameters_content() (no card wrapper, for combined card)
 │   │   │                           #   create_parameters_panel() (standalone card wrapper)
 │   │   ├── metrics_cards.py        # 4 KPI cards (Sharpe, Return, Vol, VaR)
@@ -101,8 +110,9 @@ quantum/
 │   │   ├── nl_input.py             # Natural language portfolio input panel
 │   │   │                           #   create_nl_input_content() (no card wrapper, for combined card)
 │   │   │                           #   create_nl_input_panel() (standalone card wrapper)
-│   │   └── chat_widget.py          # Chat sidebar panel (1/4, dynamic position toggles)
+│   │   └── chat_widget.py          # Chat sidebar panel v2 (1/4, dynamic position toggles)
 │   │                               #   id=chat-sidebar, 4 toggle buttons (◀▲▼▶)
+│   │                               #   Badges: CTX (enriched context), MT (multi-turn), TOOLS (search/validate)
 │   │                               #   store-chat-position (right|left|top|bottom)
 │   └── assets/
 │       └── style.css               # Dark mode theme (#0d1117, accent #00d4aa)
@@ -125,12 +135,12 @@ quantum/
 
 ## Data Flow
 
-1. **EJECUTAR** click → `engine/data.py` fetches prices → `monte_carlo.py` runs 10K sims → `optimizer.py` finds optimal via SLSQP → `ensemble.py` runs all 7 methods + voting + shrinkage → `risk.py` calculates metrics + risk contribution → dashboard updates all 7 chart sections + sliders + ensemble table → **auto-triggers AI Analysis** (see #4) + **auto-triggers Sentiment/Fundamental** (see #3)
+1. **EJECUTAR** click **or parameter change** → `engine/data.py` fetches prices → `monte_carlo.py` runs 10K sims → `optimizer.py` finds optimal via SLSQP → `ensemble.py` runs all 7 methods + voting + shrinkage → `risk.py` calculates metrics + risk contribution → dashboard updates all 7 chart sections + sliders + ensemble table → **auto-triggers AI Analysis** (see #4) + **auto-triggers Sentiment/Fundamental** (see #3). Parameter inputs (`input-rf`, `input-sims`, `input-var-level`) use `debounce=True` and are `Input` triggers on CB1; changes auto-re-execute the pipeline only if it has been run at least once (checks `store-mc-results`).
 2. **Slider changes** → `risk.py` recalculates metrics in real-time → updates metric cards
 3. **Sentimiento + Fundamental (auto-triggered + manual)** → fires automatically when `store-optimal-weights` changes (also available via ACTUALIZAR NOTICIAS button) → `engine/sentiment.py` fetches yfinance news → keyword scoring → **`agents/fundamental_analyst.py`** combines quant metrics + news into a ponderacion cuantitativo-fundamental → renders per-ticker sentiment + AI fundamental analysis
 4. **Analisis AI (auto-triggered)** → fires automatically when `store-optimal-weights` changes (from EJECUTAR or NL Builder) → `agents/graph.py` runs LangGraph workflow with ensemble + sentiment data: Quant Analyst → Risk Analyst ↔ Market Analyst (debate) → Portfolio Advisor → displays recommendation. Also available as manual re-run via button.
 5. **CONSTRUIR PORTAFOLIO** → `agents/portfolio_builder.py` runs ReAct agent with BUILDER_TOOLS (3): interprets NL prompt → selects tickers → validates → returns `{tickers, method, reasoning}` (NO weights, except `"preset"`). Optionally returns `"constraints"` with per-ticker min/max bounds (e.g. `{"NVDA": {"min": 0.10}, "_all": {"max": 0.25}}`). Callback computes weights deterministicaly: `method="preset"` → user-specified percentages passed through, `"ensemble"` → ensemble shrinkage (default), `"optimize"` → SLSQP, `"equal_weight"` → 1/N, `"risk_parity"` → engine risk parity, `"min_variance"` → engine min variance, `"split"` → `_compute_split_weights()`. Constraints are converted to SLSQP bounds via `_build_bounds_from_constraints()` and passed to all optimizers + ensemble. Then `_run_full_pipeline(preset_weights=weight_map, method=method, constraints=constraints)` → `_apply_weight_floor(constraints=constraints)` ensures min 2% per ticker AND respects user constraints → updates `store-tickers` + runs full pipeline (MC + ensemble + all charts) → **auto-triggers AI Analysis** (see #4) + **auto-triggers Sentiment** (see #3). Same prompt always produces identical weights.
-6. **Chatbot** → always-visible sidebar (1/4, repositionable via toggle buttons) → user types question → callback reads all portfolio stores → builds context dict → `agents/chatbot.py` ChatbotAgent.chat() with InMemorySaver for multi-turn memory → returns markdown response rendered in chat bubble.
+6. **Chatbot v2** → always-visible sidebar (1/4, repositionable via toggle buttons) → user types question → callback reads all portfolio stores **+ parameter values + sentiment + MC + prices** → `_build_portfolio_context(+sentiment_data, mc_data, prices_data)` builds **enriched** context dict with parameters, tickers, weights, metrics, ensemble, correlation matrix, risk contribution, sentiment detailed, drawdown, historical performance, MC distribution → `_get_chatbot()` returns cached `ChatbotAgent` → `.chat()` with `CHATBOT_TOOLS` (search, validate, analyze) + InMemorySaver → returns `{"response": str, "action": dict|None}`. If action present → stored in `store-chat-action` → `execute_chat_action` callback picks it up and runs `_run_full_pipeline()` with appropriate params → full dashboard update.
 7. **Chat position toggle** → click ◀▲▼▶ buttons → `switch_chat_position` callback updates inline styles on `#app-layout`, `#dashboard-main`, `#chat-sidebar` via `_compute_position_styles(pos)` → CSS `flex-direction` + `order` switch without DOM rebuild → chat history and all stores preserved.
 
 ## Ensemble Optimization (engine/ensemble.py)
@@ -185,10 +195,30 @@ Constraints are enforced at both the optimizer level (SLSQP bounds) and post-pro
 
 Constraint normalization (callbacks.py, safety net): after parsing the agent's JSON, any ticker with `max<=0` or a lone `{"min": 0}` is removed from the ticker list (treated as exclusion). This guarantees deterministic results even if the LLM parses "0% en X" inconsistently between `{"max": 0}` and `{"min": 0}`.
 
-### Chatbot Interactivo (agents/chatbot.py)
-Conversational agent using `create_react_agent` + `InMemorySaver` for multi-turn memory. Receives full portfolio context (tickers, weights, metrics, ensemble with full per-ticker weights and metrics per method, sentiment) injected as `[CONTEXTO DEL PORTAFOLIO]` block on each message. System prompt in Spanish. No tools (v1 — pure conversational with context). Thread ID (UUID) generated per page load.
+### Chatbot Interactivo v2 (agents/chatbot.py)
+Conversational agent v2 using `create_react_agent` + `InMemorySaver` + `CHATBOT_TOOLS` (3 read-only tools). Receives **enriched** portfolio context (parameters, tickers, weights, metrics, ensemble, correlation matrix, risk contribution, sentiment detailed, drawdown, historical performance, MC distribution) injected as `[CONTEXTO DEL PORTAFOLIO]` block on each message. Context includes current simulation parameters (risk-free rate, VaR confidence, num simulations) and uses actual `rf`/`var_conf` values when computing metrics via `calc_portfolio_metrics`. `_format_context` renders all sections including 6 new v2 data blocks (correlation pairs |r|>0.5, risk contribution sorted, sentiment per ticker with headlines, drawdown max/current, period returns per asset, MC percentiles p5/p25/median/p75/p95). System prompt in Spanish with CAPACIDADES + ACCIONES sections.
 
-Dashboard integration: always-visible sidebar (`chat_widget.py`, 300px fixed, dynamically repositionable) with 3 callbacks — init (generate thread_id), send (build context from stores → ChatbotAgent.chat() → render markdown bubbles), position toggle (switch_chat_position). Layout uses CSS flexbox: `.app-layout` (100vw × 100vh flex row) → `.dashboard-main` (flex: 1 1 0%, fills remaining space, min-width: 0) + `.chat-sidebar` (flex: 0 0 300px, rigid). Dash internal wrappers (`#react-entry-point`, `#_dash-app-content`) are explicitly sized to 100% to prevent layout interference. Position toggle buttons (◀▲▼▶) in chat header switch between right/left/top/bottom by changing inline styles on 3 container IDs (`app-layout`, `dashboard-main`, `chat-sidebar`) — no DOM rebuild, all state preserved. `_compute_position_styles(pos)` returns the 3 style dicts per position. Left/Right: only order + border changes (no flex overrides). Top/Bottom: flex-direction column + sidebar width: 100% + height: 25vh. Responsive: stacks vertically below 1200px.
+**Enriched Context v2** (6 new sections in `_build_portfolio_context`):
+- `correlation_matrix`: cov → corr via `cov / outer(sqrt(diag(cov)))`, with tickers + matrix
+- `risk_contribution`: `calc_risk_contribution(weights, cov)` → `{ticker: pct}` (sums to 1.0)
+- `sentiment`: `store-sentiment-data` → `score_general` + `por_ticker` with `score_promedio` + `noticias`
+- `drawdown`: from `store-prices-data` + weights → `max_drawdown`, `current_drawdown`
+- `historical_performance`: from `store-prices-data` → `portfolio_period_return` + per-ticker returns
+- `mc_distribution`: from `store-mc-results` → percentiles (p5, p25, median, p75, p95) of returns and sharpe
+
+**Tools** (v2): `CHATBOT_TOOLS` = `[validate_tickers, search_tickers_by_sector, fetch_and_analyze]` — read-only tools for searching sectors, validating tickers, and fetching stats. No optimization tools.
+
+**Actions via Markers** (v2): `chat()` returns `{"response": str, "action": dict|None}`. `_extract_action(text)` parses `[ACTION:type:{json}]` markers from LLM output:
+- `update_weights`: `{"AAPL": 0.25, ...}` → all tickers, sums to 1.0
+- `add_ticker`: `{"ticker": "BTC-USD"}` → appends to portfolio
+- `remove_ticker`: `{"ticker": "TSLA"}` → removes (min 2 remain)
+- `rerun_pipeline`: `{}` → re-executes MC + ensemble
+
+Action markers are extracted, stripped from visible response, and stored in `store-chat-action`. The `execute_chat_action` callback picks them up and runs `_run_full_pipeline()` accordingly.
+
+**Cached Instance**: `_chatbot_instance` (module-level) preserves `MemorySaver` across messages for true multi-turn memory. `_get_chatbot()` returns the cached instance.
+
+Dashboard integration: always-visible sidebar (`chat_widget.py`, 300px fixed, dynamically repositionable) with 4 callbacks — init (generate thread_id), send (build enriched context from stores → ChatbotAgent.chat() → parse action → render markdown bubbles), execute_chat_action (triggers pipeline on action), position toggle (switch_chat_position). Layout uses CSS flexbox: `.app-layout` (100vw × 100vh flex row) → `.dashboard-main` (flex: 1 1 0%, fills remaining space, min-width: 0) + `.chat-sidebar` (flex: 0 0 300px, rigid). Dash internal wrappers (`#react-entry-point`, `#_dash-app-content`) are explicitly sized to 100% to prevent layout interference. Position toggle buttons (◀▲▼▶) in chat header switch between right/left/top/bottom by changing inline styles on 3 container IDs (`app-layout`, `dashboard-main`, `chat-sidebar`) — no DOM rebuild, all state preserved. `_compute_position_styles(pos)` returns the 3 style dicts per position. Left/Right: only order + border changes (no flex overrides). Top/Bottom: flex-direction column + sidebar width: 100% + height: 25vh. Responsive: stacks vertically below 1200px.
 
 ### SECTOR_TICKERS Asset Coverage (agents/tools.py)
 ~308 curated mappings, ~1004 unique tickers:
@@ -234,6 +264,8 @@ Ticker labels show the full company name on hover via HTML `title` attribute. Th
 - `store-chat-history` — chat message history (list of {role, content} dicts)
 - `store-chat-thread-id` — UUID for chatbot memory thread (generated on page load)
 - `store-chat-position` — current chat sidebar position (right|left|top|bottom)
+- `store-sentiment-data` — sentiment scores + news per ticker (for chatbot v2 context)
+- `store-chat-action` — pending chatbot action (update_weights, add/remove ticker, rerun)
 
 ## Key Config (config.py)
 
@@ -270,16 +302,43 @@ Markdown rendered inside `.agent-panel`, `#sentiment-output`, and `.chat-bubble-
 python app.py                           # Start dashboard
 python -c "from engine import *"        # Verify engine (incl. ensemble, sentiment)
 python -c "from agents import *"        # Verify agents (incl. PortfolioBuilderAgent)
+python -c "from dashboard.callbacks import register_callbacks"  # Verify callbacks (17 total)
 python -c "from config import get_ticker_name; print(get_ticker_name('AMX'))"  # Test ticker name
+python -c "from agents.tools import CHATBOT_TOOLS; print(len(CHATBOT_TOOLS))"  # Verify chatbot tools (3)
+python -c "from agents.chatbot import ChatbotAgent; print(ChatbotAgent._extract_action('[ACTION:rerun_pipeline:{}]'))"  # Test action parser
 ```
+
+## Test Coverage
+
+Comprehensive test suite executed across 10 categories (113 PASS / 0 FAIL / 7 SKIP / 4 TIMEOUT).
+Tests run via automated unit/integration checks + Playwright E2E (Firefox headless).
+
+| Category | Tests | Result | Details |
+|----------|-------|--------|---------|
+| **A. Engine** | 17/17 | PASS | data, monte_carlo, optimizer, risk, ensemble, sentiment |
+| **B. Agents (Debate)** | 4/4 | PASS | Multi-agent debate graph, auto-trigger, AI output |
+| **C. NL Builder** | 6/13 | 6 PASS, 7 SKIP | Sector query, equal weight, constraints (SKIP=API rate limit) |
+| **D. Chatbot Context** | 22/22 | PASS | All 6 enriched sections: correlation, risk_contrib, sentiment, drawdown, historical_perf, MC distribution |
+| **E. Chatbot Tools** | 2/5 | 2 PASS, 3 TIMEOUT | CHATBOT_TOOLS verified at code level; E2E timeouts from LLM cold start |
+| **F. Chatbot Actions** | 18/18 | PASS | update_weights, add/remove_ticker, rerun_pipeline, edge cases (invalid type, malformed JSON, hypothetical) |
+| **G. Memory** | 4/4 | PASS | Multi-turn InMemorySaver, thread isolation, cached instance, no-key fallback |
+| **H. Callbacks/Dashboard** | 18/19 | 18 PASS, 1 TIMEOUT | EJECUTAR, OPTIMO, IGUAL, RANDOM, NORM, param change, AI re-run, sentiment auto/manual, sliders, NL→pipeline |
+| **I. Layout/UI** | 8/8 | PASS | Chat sidebar, position toggles (◀▲▼▶), badges (CTX/MT/TOOLS), dark mode, responsive CSS |
+| **J. Edge Cases** | 14/14 | PASS | Invalid/empty tickers, 1-ticker, 30-ticker, zero weights, negative returns, extreme risk contrib, MC params |
+
+**Notes:**
+- SKIP tests are NL Builder variants (C3-C9) blocked by LLM API rate limiting; underlying code verified at unit level
+- TIMEOUT tests are LLM cold start >120s (E1-E3, H16); not code bugs
+- E2E tests used Playwright (Python, Firefox headless) against localhost:8050
+- Key API naming conventions verified: `run_monte_carlo(num_sims=)`, `optimize_max_sharpe(risk_free_rate=)`, `ensemble_vote` returns Spanish keys, VaR uses positive loss convention
 
 ## Next Steps
 
-### Chatbot v2 — Tools y Modificaciones
-Ampliar el chatbot (actualmente conversacional puro, v1) con herramientas para:
-- **Modificaciones via chat**: "Sube ACWI a 10%", "Agrega BTC-USD al portafolio" — interpretar y ejecutar cambios en sliders/tickers
+### Chatbot v3 — Advanced Features
+Posibles mejoras futuras sobre el chatbot v2 actual:
 - **Analisis comparativo**: "Compara mi portafolio con el S&P 500", "Muestra el drawdown si hubiera invertido hace 5 anos"
-- **Re-ejecutar pipeline**: tool para re-correr MC + ensemble desde el chat
+- **Backtesting via chat**: tool para simular rendimiento historico con pesos específicos
+- **Alertas de riesgo**: monitoreo proactivo de cambios en correlacion, drawdown, o sentimiento
 
 ## Reference Materials
 

@@ -792,3 +792,8 @@ ALL_TOOLS = [
 # is not tempted to modify them.  Weight calculation happens deterministically
 # in the dashboard callback.
 BUILDER_TOOLS = [validate_tickers, search_tickers_by_sector, fetch_and_analyze]
+
+# Subset for the Chatbot v2 — read-only tools for searching and analyzing.
+# Allows the chatbot to search sectors, validate tickers, and fetch stats,
+# but not run optimizations (those happen via action markers in the callback).
+CHATBOT_TOOLS = [validate_tickers, search_tickers_by_sector, fetch_and_analyze]

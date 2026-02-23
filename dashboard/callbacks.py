@@ -4,6 +4,7 @@ Uses Dash pattern-matching callbacks (MATCH/ALL) so sliders work
 dynamically with any set of tickers, not just the hardcoded Magnificent 7.
 """
 
+import time
 import uuid
 
 import numpy as np
@@ -467,6 +468,7 @@ def register_callbacks(app):
         )
 
     # ── Callback 1: EJECUTAR — run full MC pipeline ──────────────────
+    # Also auto-triggers when parameter inputs change (debounced).
     @app.callback(
         [
             Output("frontier-chart", "figure"),
@@ -489,17 +491,23 @@ def register_callbacks(app):
             Output("store-ensemble-results", "data"),
             Output("store-prices-data", "data"),
         ],
-        Input("btn-ejecutar", "n_clicks"),
         [
-            State("input-rf", "value"),
-            State("input-sims", "value"),
-            State("input-var-level", "value"),
+            Input("btn-ejecutar", "n_clicks"),
+            Input("input-rf", "value"),
+            Input("input-sims", "value"),
+            Input("input-var-level", "value"),
+        ],
+        [
             State("store-tickers", "data"),
+            State("store-mc-results", "data"),
         ],
         prevent_initial_call=True,
     )
-    def run_simulation(n_clicks, rf_pct, num_sims, var_level_pct, tickers):
-        if not n_clicks:
+    def run_simulation(n_clicks, rf_pct, num_sims, var_level_pct, tickers,
+                       mc_data):
+        triggered = ctx.triggered_id
+        # Parameter change but pipeline hasn't run yet → skip
+        if triggered != "btn-ejecutar" and mc_data is None:
             return [no_update] * 19
 
         tickers = tickers or TICKERS
@@ -1010,7 +1018,10 @@ def register_callbacks(app):
 
     # ── Callback: Sentiment / News + Fundamental Analysis (manual) ──
     @app.callback(
-        Output("sentiment-output", "children"),
+        [
+            Output("sentiment-output", "children"),
+            Output("store-sentiment-data", "data"),
+        ],
         Input("btn-refresh-news", "n_clicks"),
         [
             State("store-tickers", "data"),
@@ -1024,12 +1035,15 @@ def register_callbacks(app):
     )
     def refresh_news(n_clicks, tickers, opt_data, stats_data, ensemble_data, rf_pct, var_level_pct):
         if not n_clicks:
-            return no_update
+            return no_update, no_update
         return _build_sentiment_output(tickers, opt_data, stats_data, ensemble_data, rf_pct, var_level_pct)
 
     # ── Callback: Sentiment auto-trigger on portfolio generation ────
     @app.callback(
-        Output("sentiment-output", "children", allow_duplicate=True),
+        [
+            Output("sentiment-output", "children", allow_duplicate=True),
+            Output("store-sentiment-data", "data", allow_duplicate=True),
+        ],
         Input("store-optimal-weights", "data"),
         [
             State("store-tickers", "data"),
@@ -1042,7 +1056,7 @@ def register_callbacks(app):
     )
     def auto_refresh_news(opt_data, tickers, stats_data, ensemble_data, rf_pct, var_level_pct):
         if opt_data is None:
-            return no_update
+            return no_update, no_update
         return _build_sentiment_output(tickers, opt_data, stats_data, ensemble_data, rf_pct, var_level_pct)
 
     # ── Callback: Chat init (generate thread_id on page load) ───────
@@ -1062,6 +1076,7 @@ def register_callbacks(app):
             Output("chat-input", "value"),
             Output("store-chat-history", "data"),
             Output("chat-loading-target", "children"),
+            Output("store-chat-action", "data"),
         ],
         [Input("chat-send", "n_clicks"), Input("chat-input", "n_submit")],
         [
@@ -1072,15 +1087,23 @@ def register_callbacks(app):
             State("store-annual-stats", "data"),
             State("store-ensemble-results", "data"),
             State("store-tickers", "data"),
+            State("input-rf", "value"),
+            State("input-sims", "value"),
+            State("input-var-level", "value"),
+            State("store-sentiment-data", "data"),
+            State("store-mc-results", "data"),
+            State("store-prices-data", "data"),
         ],
         prevent_initial_call=True,
     )
     def send_chat_message(
         n_clicks, n_submit, text, history, thread_id,
         opt_data, stats_data, ensemble_data, tickers,
+        rf_pct, num_sims, var_level_pct,
+        sentiment_data, mc_data, prices_data,
     ):
         if not text or not text.strip():
-            return no_update, no_update, no_update, no_update
+            return no_update, no_update, no_update, no_update, no_update
 
         text = text.strip()
         history = history or []
@@ -1092,40 +1115,188 @@ def register_callbacks(app):
         if opt_data is None:
             reply = "Primero ejecuta una simulacion (boton **EJECUTAR** o usa el **Constructor NL**) para que pueda ayudarte con tu portafolio."
             history.append({"role": "assistant", "content": reply})
-            return _build_chat_bubbles(history), "", history, ""
+            return _build_chat_bubbles(history), "", history, "", no_update
 
-        # Build portfolio context
+        rf = (rf_pct or 4) / 100.0
+        num_sims = int(num_sims or 10000)
+        var_conf = (var_level_pct or 95) / 100.0
+
+        # Build portfolio context (enriched v2)
         portfolio_context = _build_portfolio_context(
-            opt_data, stats_data, ensemble_data, tickers
+            opt_data, stats_data, ensemble_data, tickers,
+            rf=rf, var_conf=var_conf, num_sims=num_sims,
+            sentiment_data=sentiment_data, mc_data=mc_data,
+            prices_data=prices_data,
         )
 
-        # Chat with agent
+        # Chat with agent (cached instance)
         try:
-            from agents.chatbot import ChatbotAgent
-            chatbot = ChatbotAgent()
-            reply = chatbot.chat(text, portfolio_context, thread_id or "default")
+            chatbot = _get_chatbot()
+            result = chatbot.chat(text, portfolio_context, thread_id or "default")
+            reply = result.get("response", str(result))
+            action = result.get("action")
         except ImportError:
             reply = "**Error:** Dependencias de LangGraph/LangChain no instaladas."
+            action = None
         except Exception as exc:
             reply = f"**Error:** `{exc}`"
+            action = None
 
         history.append({"role": "assistant", "content": reply})
-        return _build_chat_bubbles(history), "", history, ""
+
+        # Prepare action store data (with timestamp for dedup)
+        action_store = None
+        if action:
+            action_store = {
+                "type": action["type"],
+                "payload": action["payload"],
+                "timestamp": time.time(),
+            }
+
+        return _build_chat_bubbles(history), "", history, "", action_store
+
+    # ── Callback: Execute chat action ────────────────────────────────
+    @app.callback(
+        [
+            Output("store-tickers", "data", allow_duplicate=True),
+            Output("sliders-container", "children", allow_duplicate=True),
+            Output("frontier-chart", "figure", allow_duplicate=True),
+            Output("weights-chart", "figure", allow_duplicate=True),
+            Output("metric-sharpe-value", "children", allow_duplicate=True),
+            Output("metric-return-value", "children", allow_duplicate=True),
+            Output("metric-volatility-value", "children", allow_duplicate=True),
+            Output("metric-var-value", "children", allow_duplicate=True),
+            Output("store-mc-results", "data", allow_duplicate=True),
+            Output("store-optimal-weights", "data", allow_duplicate=True),
+            Output("store-annual-stats", "data", allow_duplicate=True),
+            Output("total-bar-fill", "style", allow_duplicate=True),
+            Output("total-bar-label", "children", allow_duplicate=True),
+            Output("correlation-chart", "figure", allow_duplicate=True),
+            Output("risk-decomposition-chart", "figure", allow_duplicate=True),
+            Output("ensemble-table-container", "children", allow_duplicate=True),
+            Output("drawdown-chart", "figure", allow_duplicate=True),
+            Output("performance-chart", "figure", allow_duplicate=True),
+            Output("store-ensemble-results", "data", allow_duplicate=True),
+            Output("store-prices-data", "data", allow_duplicate=True),
+        ],
+        Input("store-chat-action", "data"),
+        [
+            State("store-tickers", "data"),
+            State("store-optimal-weights", "data"),
+            State("input-rf", "value"),
+            State("input-sims", "value"),
+            State("input-var-level", "value"),
+        ],
+        prevent_initial_call=True,
+    )
+    def execute_chat_action(action_data, current_tickers, opt_data,
+                            rf_pct, num_sims, var_level_pct):
+        if not action_data:
+            return [no_update] * 20
+
+        action_type = action_data.get("type")
+        payload = action_data.get("payload", {})
+
+        if not action_type:
+            return [no_update] * 20
+
+        current_tickers = current_tickers or TICKERS
+        rf = (rf_pct or 4) / 100.0
+        num_sims_val = int(num_sims or 10000)
+        var_conf = (var_level_pct or 95) / 100.0
+
+        try:
+            if action_type == "update_weights":
+                # payload is {ticker: weight, ...}
+                weight_map = {k: float(v) for k, v in payload.items()}
+                # Ensure we use current tickers for any missing ones
+                for t in current_tickers:
+                    weight_map.setdefault(t, 0.0)
+                # Normalize
+                w_sum = sum(weight_map.values())
+                if w_sum > 0:
+                    weight_map = {t: w / w_sum for t, w in weight_map.items()}
+                tickers_to_use = list(weight_map.keys())
+                pipeline = _run_full_pipeline(
+                    tickers_to_use, rf, num_sims_val, var_conf,
+                    preset_weights=weight_map,
+                )
+
+            elif action_type == "add_ticker":
+                new_ticker = payload.get("ticker", "").upper().strip()
+                if not new_ticker:
+                    return [no_update] * 20
+                new_tickers = list(current_tickers)
+                if new_ticker not in new_tickers:
+                    new_tickers.append(new_ticker)
+                pipeline = _run_full_pipeline(
+                    new_tickers, rf, num_sims_val, var_conf,
+                )
+
+            elif action_type == "remove_ticker":
+                rm_ticker = payload.get("ticker", "").upper().strip()
+                remaining = [t for t in current_tickers if t != rm_ticker]
+                if len(remaining) < 2:
+                    return [no_update] * 20
+                pipeline = _run_full_pipeline(
+                    remaining, rf, num_sims_val, var_conf,
+                )
+
+            elif action_type == "rerun_pipeline":
+                pipeline = _run_full_pipeline(
+                    current_tickers, rf, num_sims_val, var_conf,
+                )
+
+            else:
+                return [no_update] * 20
+
+        except Exception:
+            return [no_update] * 20
+
+        # Map pipeline outputs to callback outputs (same as CB8)
+        available_tickers = pipeline[7]["tickers"]  # opt_store has tickers
+        return [
+            available_tickers,           # store-tickers
+            pipeline[11],                # sliders-container
+            pipeline[0],                 # frontier-chart
+            pipeline[1],                 # weights-chart
+            pipeline[2],                 # sharpe
+            pipeline[3],                 # return
+            pipeline[4],                 # vol
+            pipeline[5],                 # var
+            pipeline[6],                 # store-mc-results
+            pipeline[7],                 # store-optimal-weights
+            pipeline[8],                 # store-annual-stats
+            pipeline[9],                 # bar style
+            pipeline[10],               # bar label
+            pipeline[12],               # correlation-chart
+            pipeline[13],               # risk-decomposition-chart
+            pipeline[14],               # ensemble-table-container
+            pipeline[15],               # drawdown-chart
+            pipeline[16],               # performance-chart
+            pipeline[17],               # store-ensemble-results
+            pipeline[18],               # store-prices-data
+        ]
 
 
 def _build_sentiment_output(tickers, opt_data, stats_data, ensemble_data, rf_pct, var_level_pct):
     """Fetch news, score sentiment, and optionally run fundamental analysis.
 
     Shared by the manual button callback and the auto-trigger callback.
+    Returns ``(html_div, sentiment_store_data)`` where *sentiment_store_data*
+    is a dict suitable for ``store-sentiment-data`` (or ``None`` on error).
     """
     tickers = tickers or TICKERS
 
     try:
         sentiment_data = fetch_all_news(tickers, max_per_ticker=cfg.MAX_NEWS_PER_TICKER)
     except Exception as exc:
-        return html.Div(
-            f"Error obteniendo noticias: {exc}",
-            style={"color": "#fb923c", "fontSize": "0.75rem"},
+        return (
+            html.Div(
+                f"Error obteniendo noticias: {exc}",
+                style={"color": "#fb923c", "fontSize": "0.75rem"},
+            ),
+            None,
         )
 
     # Build formatted news output
@@ -1262,7 +1433,13 @@ def _build_sentiment_output(tickers, opt_data, stats_data, ensemble_data, rf_pct
             )
         )
 
-    return html.Div(children)
+    # Build store data for chatbot context
+    sentiment_store = {
+        "por_ticker": sentiment_data.get("por_ticker", {}),
+        "score_general": sentiment_data.get("score_general", 0),
+    }
+
+    return html.Div(children), sentiment_store
 
 
 def _build_chat_bubbles(history):
@@ -1289,23 +1466,56 @@ def _build_chat_bubbles(history):
     return bubbles
 
 
-def _build_portfolio_context(opt_data, stats_data, ensemble_data, tickers):
-    """Build a context dict from dashboard stores for the chatbot."""
+_chatbot_instance = None
+
+
+def _get_chatbot():
+    """Return a cached ChatbotAgent instance (preserves multi-turn memory)."""
+    global _chatbot_instance
+    if _chatbot_instance is None:
+        from agents.chatbot import ChatbotAgent
+        _chatbot_instance = ChatbotAgent()
+    return _chatbot_instance
+
+
+def _build_portfolio_context(opt_data, stats_data, ensemble_data, tickers,
+                             rf=0.04, var_conf=0.95, num_sims=10000,
+                             sentiment_data=None, mc_data=None,
+                             prices_data=None):
+    """Build an enriched context dict from dashboard stores for the chatbot.
+
+    v2 adds: correlation_matrix, risk_contribution, sentiment (detailed),
+    drawdown, historical_performance, mc_distribution.
+    """
     context = {}
 
+    # Current parameter values
+    context["parameters"] = {
+        "risk_free_rate": rf,
+        "var_confidence": var_conf,
+        "num_simulations": int(num_sims),
+    }
+
+    ctx_tickers = []
     if opt_data:
-        context["tickers"] = opt_data.get("tickers", tickers or [])
+        ctx_tickers = opt_data.get("tickers", tickers or [])
+        context["tickers"] = ctx_tickers
         context["weights"] = opt_data.get("weights", [])
 
+    opt_weights = None
+    cov_mat = None
+    mean_ret = None
+
     if stats_data and opt_data:
-        stats_tickers = stats_data.get("tickers", tickers or [])
         opt_weights = np.array(opt_data.get("weights", []))
         mean_ret = np.array(stats_data.get("mean_returns", []))
         cov_mat = np.array(stats_data.get("cov_matrix", []))
 
         if len(opt_weights) > 0 and len(mean_ret) > 0:
             try:
-                metrics = calc_portfolio_metrics(opt_weights, mean_ret, cov_mat, 0.04, 0.95)
+                metrics = calc_portfolio_metrics(
+                    opt_weights, mean_ret, cov_mat, rf, var_conf,
+                )
                 context["metrics"] = metrics
             except Exception:
                 pass
@@ -1313,7 +1523,142 @@ def _build_portfolio_context(opt_data, stats_data, ensemble_data, tickers):
     if ensemble_data:
         context["ensemble"] = ensemble_data
 
+    # ── NEW v2: Correlation matrix ──
+    if cov_mat is not None and len(ctx_tickers) > 1:
+        try:
+            diag = np.sqrt(np.diag(cov_mat))
+            outer = np.outer(diag, diag)
+            # Avoid division by zero
+            outer[outer == 0] = 1.0
+            corr = cov_mat / outer
+            context["correlation_matrix"] = {
+                "tickers": ctx_tickers,
+                "matrix": corr.tolist(),
+            }
+        except Exception:
+            pass
+
+    # ── NEW v2: Risk contribution ──
+    if opt_weights is not None and cov_mat is not None and len(opt_weights) > 0:
+        try:
+            rc = calc_risk_contribution(opt_weights, cov_mat)
+            context["risk_contribution"] = {
+                t: float(rc[i]) for i, t in enumerate(ctx_tickers)
+            }
+        except Exception:
+            pass
+
+    # ── NEW v2: Sentiment detailed ──
+    if sentiment_data:
+        context["sentiment"] = {
+            "score_general": sentiment_data.get("score_general", 0),
+            "por_ticker": sentiment_data.get("por_ticker", {}),
+        }
+
+    # ── NEW v2: Drawdown ──
+    if prices_data and opt_weights is not None and len(opt_weights) > 0:
+        try:
+            _dd = _compute_drawdown_stats(prices_data, ctx_tickers, opt_weights)
+            if _dd:
+                context["drawdown"] = _dd
+        except Exception:
+            pass
+
+    # ── NEW v2: Historical performance ──
+    if prices_data and opt_weights is not None and len(opt_weights) > 0:
+        try:
+            _hp = _compute_historical_performance(
+                prices_data, ctx_tickers, opt_weights,
+            )
+            if _hp:
+                context["historical_performance"] = _hp
+        except Exception:
+            pass
+
+    # ── NEW v2: Monte Carlo distribution ──
+    if mc_data:
+        try:
+            rets = np.array(mc_data.get("returns", []))
+            sharpes = np.array(mc_data.get("sharpe_ratios", []))
+            pcts = [5, 25, 50, 75, 95]
+            pct_labels = ["p5", "p25", "median", "p75", "p95"]
+            mc_dist = {}
+            if len(rets) > 0:
+                ret_p = np.percentile(rets, pcts)
+                mc_dist["return_percentiles"] = {
+                    k: float(v) for k, v in zip(pct_labels, ret_p)
+                }
+            if len(sharpes) > 0:
+                sh_p = np.percentile(sharpes, pcts)
+                mc_dist["sharpe_percentiles"] = {
+                    k: float(v) for k, v in zip(pct_labels, sh_p)
+                }
+            if mc_dist:
+                context["mc_distribution"] = mc_dist
+        except Exception:
+            pass
+
     return context
+
+
+def _compute_drawdown_stats(prices_data, tickers, opt_weights):
+    """Compute max and current drawdown from prices store data."""
+    dates = prices_data.get("dates", [])
+    prices_dict = prices_data.get("prices", {})
+    if not dates or not prices_dict:
+        return None
+
+    n_dates = len(dates)
+    # Build portfolio value series (normalized)
+    port_values = np.zeros(n_dates)
+    for i, t in enumerate(tickers):
+        p = prices_dict.get(t)
+        if p and len(p) == n_dates and p[0] != 0:
+            norm = np.array(p) / p[0]
+            port_values += opt_weights[i] * norm
+
+    if np.allclose(port_values, 0):
+        return None
+
+    # Running max and drawdown
+    running_max = np.maximum.accumulate(port_values)
+    running_max[running_max == 0] = 1.0
+    drawdowns = (port_values - running_max) / running_max
+
+    max_dd = float(np.min(drawdowns))
+    current_dd = float(drawdowns[-1]) if len(drawdowns) > 0 else 0.0
+
+    return {
+        "max_drawdown": max_dd,
+        "current_drawdown": current_dd,
+    }
+
+
+def _compute_historical_performance(prices_data, tickers, opt_weights):
+    """Compute period return per ticker and portfolio from prices store."""
+    prices_dict = prices_data.get("prices", {})
+    if not prices_dict:
+        return None
+
+    per_ticker = {}
+    for t in tickers:
+        p = prices_dict.get(t)
+        if p and len(p) > 1 and p[0] != 0:
+            per_ticker[t] = float((p[-1] / p[0]) - 1)
+
+    if not per_ticker:
+        return None
+
+    # Portfolio return (weighted sum of normalized returns)
+    port_ret = sum(
+        opt_weights[i] * per_ticker.get(t, 0.0)
+        for i, t in enumerate(tickers)
+    )
+
+    return {
+        "portfolio_period_return": float(port_ret),
+        "per_ticker": per_ticker,
+    }
 
 
 def _execute_agent_analysis(portfolio_data, ensemble_data):
